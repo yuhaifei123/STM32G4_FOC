@@ -1281,21 +1281,6 @@
           </Files>
         </Group>
         <Group>
-          <GroupName>Application/User/App</GroupName>
-          <Files>
-            <File>
-              <FileName>program.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Core/App/program.c</FilePath>
-            </File>
-            <File>
-              <FileName>program.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>../Core/App/program.h</FilePath>
-            </File>
-          </Files>
-        </Group>
-        <Group>
           <GroupName>Common</GroupName>
           <Files>
             <File>
@@ -1307,6 +1292,21 @@
               <FileName>Common_Utils.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Core\common\Common_Utils.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>App</GroupName>
+          <Files>
+            <File>
+              <FileName>program.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\App\program.c</FilePath>
+            </File>
+            <File>
+              <FileName>program.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\program.h</FilePath>
             </File>
           </Files>
         </Group>

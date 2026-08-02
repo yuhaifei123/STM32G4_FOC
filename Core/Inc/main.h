@@ -57,18 +57,15 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define N_SLEEP_Pin GPIO_PIN_14
+#define SPI1_NSS_Pin GPIO_PIN_4       /* SPI1 CS      - PA4 */
+#define SPI1_NSS_GPIO_Port GPIOA
+#define N_SLEEP_Pin GPIO_PIN_14        /* DRV sleep    - PB14, active low */
 #define N_SLEEP_GPIO_Port GPIOB
-#define N_FAULT_Pin GPIO_PIN_15
+#define N_FAULT_Pin GPIO_PIN_15        /* DRV fault    - PB15, active low */
 #define N_FAULT_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
-#define SPI1_NSS_Pin GPIO_PIN_4       /* SPI1 Ƭѡ   - PA4 */
-#define SPI1_NSS_GPIO_Port GPIOA
-#define N_SLEEP_Pin GPIO_PIN_14        /* DRV ����    - PB14 */
-#define N_SLEEP_GPIO_Port GPIOB
-#define N_FAULT_Pin GPIO_PIN_15        /* DRV ����    - PB15 */
-#define N_FAULT_GPIO_Port GPIOB
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
