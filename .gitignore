@@ -1,0 +1,38 @@
+# Keil MDK build outputs
+MDK-ARM/*/
+!MDK-ARM/RTE/
+*.axf
+*.build_log.htm
+*.crf
+*.d
+*.dep
+*.htm
+*.iex
+*.lnp
+*.lst
+*.map
+*.o
+*.sct
+
+# Keil user/session files
+*.uvguix.*
+*.uvgui.*
+*.uvoptx
+*.uvopt
+*.uvgui_*
+*.uvguix_*
+JLinkLog.txt
+JLinkSettings.ini
+
+# VS Code / Keil Assistant logs
+MDK-ARM/.vscode/*.log
+MDK-ARM/.vscode/*.lock
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+*.swp
+Thumbs.db
+Desktop.ini
+Core/App/新建文本文档.txt
