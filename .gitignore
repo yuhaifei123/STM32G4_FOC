@@ -31,6 +31,7 @@ MDK-ARM/.vscode/*.lock
 # Temporary files
 *.tmp
 *.bak
+*.bak_*
 *.orig
 *.swp
 Thumbs.db
