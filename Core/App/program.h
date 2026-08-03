@@ -1,10 +1,7 @@
 #ifndef __PROGRAM_H
 #define __PROGRAM_H
 
-#include "main.h"
-#include "adc.h"
-#include "tim.h"
-#include "stm32g4xx_hal.h"
+#include "program_utils.h"
 
 /* 调试用 PWM 控制参数 */
 typedef struct {

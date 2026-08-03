@@ -1308,6 +1308,36 @@
               <FileType>5</FileType>
               <FilePath>..\Core\App\program.h</FilePath>
             </File>
+            <File>
+              <FileName>ma600a.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\App\ma600a.c</FilePath>
+            </File>
+            <File>
+              <FileName>ma600a.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\ma600a.h</FilePath>
+            </File>
+            <File>
+              <FileName>program_utils.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\App\program_utils.c</FilePath>
+            </File>
+            <File>
+              <FileName>program_utils.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\program_utils.h</FilePath>
+            </File>
+            <File>
+              <FileName>program_current.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\App\program_current.c</FilePath>
+            </File>
+            <File>
+              <FileName>program_current.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\program_current.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

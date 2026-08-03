@@ -181,16 +181,16 @@ void com_ADC_1_Test(void)
     last_tick = HAL_GetTick();
 
     // 获取模拟值
-    uint32_t raw1 = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);  
-    uint32_t raw3 = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);  
-    uint32_t raw4 = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_3);  
+    uint32_t raw1 = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);  /* CH1  - PA0 */
+    uint32_t raw3 = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);  /* CH3  - PA2 */
+    uint32_t raw4 = HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_3);  /* CH4  - PA3 */
 
     uint32_t mv1 = raw1 * 3300 / 4095;
     uint32_t mv3 = raw3 * 3300 / 4095;
     uint32_t mv4 = raw4 * 3300 / 4095;
 
-    // snprintf(msg, sizeof(msg), "ADC: CH1=%lumV CH3=%lumV CH4=%lumV\r\n", mv1, mv3, mv4);
-    // com_PrintData((uint8_t*)msg, strlen(msg));
+    snprintf(msg, sizeof(msg), "ADC1: CH1=%lumV CH3=%lumV CH4=%lumV\r\n", mv1, mv3, mv4);
+    com_PrintData((uint8_t*)msg, strlen(msg));
 }
 
 /**

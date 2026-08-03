@@ -57,11 +57,14 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define SPI1_NSS_Pin GPIO_PIN_4       /* SPI1 CS      - PA4 */
+// SPI 通讯使能
+#define SPI1_NSS_Pin GPIO_PIN_4      
 #define SPI1_NSS_GPIO_Port GPIOA
-#define N_SLEEP_Pin GPIO_PIN_14        /* DRV sleep    - PB14, active low */
+// 高 = 正常工作, 低电平 = 进入休眠，关闭驱动
+#define N_SLEEP_Pin GPIO_PIN_14       
 #define N_SLEEP_GPIO_Port GPIOB
-#define N_FAULT_Pin GPIO_PIN_15        /* DRV fault    - PB15, active low */
+// 故障输出 高电平 = 正常  低电平 = 故障
+#define N_FAULT_Pin GPIO_PIN_15       
 #define N_FAULT_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
