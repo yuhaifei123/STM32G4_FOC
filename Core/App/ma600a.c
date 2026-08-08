@@ -26,7 +26,6 @@ void ma600a_init(ma600a_t *ma600a, SPI_HandleTypeDef *hspi, GPIO_TypeDef *cs_por
     ma600a->comm_error_count = 0;
 }
 
-
 /**
  * 读取角度数据
  * @param enc          MA600A 磁编码器设备对象

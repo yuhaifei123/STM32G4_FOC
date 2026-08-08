@@ -1338,6 +1338,46 @@
               <FileType>5</FileType>
               <FilePath>..\Core\App\program_current.h</FilePath>
             </File>
+            <File>
+              <FileName>foc_core.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\App\foc_core.c</FilePath>
+            </File>
+            <File>
+              <FileName>foc_core.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\foc_core.h</FilePath>
+            </File>
+            <File>
+              <FileName>drv_pid.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\App\drv_pid.c</FilePath>
+            </File>
+            <File>
+              <FileName>program_svpwm.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\App\program_svpwm.c</FilePath>
+            </File>
+            <File>
+              <FileName>program_svpwm.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\program_svpwm.h</FilePath>
+            </File>
+            <File>
+              <FileName>drv_pid.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\drv_pid.h</FilePath>
+            </File>
+            <File>
+              <FileName>motor_params.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\App\motor_params.c</FilePath>
+            </File>
+            <File>
+              <FileName>motor_params.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\motor_params.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

@@ -15,6 +15,7 @@ float program_wrap_angle_0_2pi(float angle)
 /* ── 工具函数：角度差归一化到 [-π, π) ── */
 float program_wrap_delta_pm_pi(float angle)
 {
+    // 角度归一化到 [-π, π)
     if (!isfinite(angle)) return 0.0f;
     return program_wrap_angle_0_2pi(angle + PI) - PI;
 }

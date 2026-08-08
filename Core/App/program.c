@@ -3,23 +3,29 @@
 #include "Common_Utils.h"
 #include "ma600a.h"
 #include "program_current.h"
+#include "foc_core.h"
 
 /* ── 全局对象 ── */
-static volatile uint16_t g_adc2_dma_buf[ADC2_DMA_LEN]; /* ADC2 DMA 循环缓冲：[0]=CH12(PB2), [1]=CH14(PB11) */
-static volatile uint32_t g_tim6_tick_ms = 0;            /* TIM6 中断累加的时间戳 (ms)，每 1ms 自增 */
-
+/* ADC2 DMA 循环缓冲：[0]=CH12(PB2), [1]=CH14(PB11) */
+volatile uint16_t g_adc2_dma_buf[ADC2_DMA_LEN]; 
+// 程序 telemetry 数据 
+volatile program_telemetry_t g_program_telemetry;
+ /* TIM6 中断累加的时间戳 (ms)，每 1ms 自增 */
+static volatile uint32_t g_tim6_tick_ms = 0;           
 /* 调试 PWM 全局控制实例 */
 volatile program_debug_pwm_t g_debug_pwm;
+// MA600A 磁编码器设备对象
+ma600a_t g_ma600a;
+// FOC 核心对象，持有所有中间变量和输出  
+foc_core_t g_foc;
 
 /* ── 前置声明 ── */
 /* 启动 ADC2 DMA 链（TIM6 触发） */
 static void program_start_adc2_dma_chain(void);      
 /* 启动 TIM1 六路互补 PWM */
 static void program_start_tim1_pwm_outputs(void);    
-/* SVPWM 占空比应用到 TIM1 */
-static void program_apply_svpwm_to_tim1(float da, float db, float dc);
 
-static ma600a_t ma600a;
+
 
 /**
  * 初始化程序
@@ -43,7 +49,7 @@ void Program_Init(void)
     g_debug_pwm.duty_c = 0.60f;
 
     // 初始化
-    ma600a_init(&ma600a, &hspi1, SPI1_NSS_GPIO_Port, SPI1_NSS_Pin);
+    ma600a_init(&g_ma600a, &hspi1, SPI1_NSS_GPIO_Port, SPI1_NSS_Pin);
     // 启动 ADC1 注入采样
     program_start_adc1_injected();
 }
@@ -75,12 +81,13 @@ void program_Task(void)
     if(g_debug_pwm.enable)
     {
         HAL_GPIO_WritePin(N_SLEEP_GPIO_Port, N_SLEEP_Pin, GPIO_PIN_SET);
-        program_apply_svpwm_to_tim1(g_debug_pwm.duty_a, g_debug_pwm.duty_b, g_debug_pwm.duty_c);
+        foc_svpwm_duty_t duty = { .a = g_debug_pwm.duty_a, .b = g_debug_pwm.duty_b, .c = g_debug_pwm.duty_c };
+        program_apply_svpwm_to_tim1(&duty);
         return;
     }
 
     // 获取角度
-    ma600a_read_angle(&ma600a);
+    ma600a_read_angle(&g_ma600a);
 }
 
 /* 函数作用：启动 ADC2 DMA + TIM6 触发链，用于 VBUS/NTC 慢变量采样。
@@ -124,18 +131,24 @@ static void program_start_tim1_pwm_outputs(void)
     HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
 }
 
-static void program_apply_svpwm_to_tim1(float da, float db, float dc)
+void program_apply_svpwm_to_tim1(const foc_svpwm_duty_t *duty)
 {
     // 获取 PWM 周期（CCR + 1 近似 ARR+1=4250，用于占空比计算）
     uint32_t period = __HAL_TIM_GET_COMPARE(&htim1, TIM_CHANNEL_1)+ 1;
-    // 设置 da, db, dc 对应的比例 0-1之间
-    da = program_clamp_f32(da, 0.0f, 1.0f);
-    db = program_clamp_f32(db, 0.0f, 1.0f);
-    dc = program_clamp_f32(dc, 0.0f, 1.0f);
+    // 限幅到 [0, 1]
+    float da = program_clamp_f32(duty->a, 0.0f, 1.0f);
+    float db = program_clamp_f32(duty->b, 0.0f, 1.0f);
+    float dc = program_clamp_f32(duty->c, 0.0f, 1.0f);
 
-    // 计算 ccr_a, ccr_b, ccr_c
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, period * da);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, period * db);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, period * dc);
+    // 写入 TIM1 比较寄存器
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, (uint32_t)(period * da));
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, (uint32_t)(period * db));
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, (uint32_t)(period * dc));
+}
+
+/* 获取 MA600A 数据 */
+void get_ma600a(ma600a_t *out)
+{
+    *out = g_ma600a;   /* 全局实例 → 输出参数 */
 }
 
