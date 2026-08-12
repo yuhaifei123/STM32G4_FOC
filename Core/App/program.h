@@ -1,17 +1,20 @@
-#ifndef __PROGRAM_H
-#define __PROGRAM_H
+#ifndef PROGRAM_H
+#define PROGRAM_H
 
-#include "program_utils.h"
-#include "ma600a.h"
+#include "main.h"
+#include "adc.h"
+#include "tim.h"
+#include "usart.h"
+#include "motor_state.h"
 #include "foc_core.h"
 
-/* 调试用 PWM 控制参数 */
-typedef struct {
-    uint8_t enable;     /* PWM 使能标志：0=关闭, 非0=开启 */
-    float   duty_a;     /* A 相占空比 (0.0 ~ 1.0) */
-    float   duty_b;     /* B 相占空比 (0.0 ~ 1.0) */
-    float   duty_c;     /* C 相占空比 (0.0 ~ 1.0) */
-} program_debug_pwm_t;
+/* ── 系统级宏定义（program.c / program_current.c / program_svpwm.c 共用）── */
+#define PROGRAM_PI                            3.14159265359f
+#define PROGRAM_FAST_LOOP_HZ                  10000.0f
+#define PROGRAM_FAST_LOOP_DT_S                (1.0f / PROGRAM_FAST_LOOP_HZ)
+#define PROGRAM_FAST_LOOP_PERIOD_US           (1000000.0f / PROGRAM_FAST_LOOP_HZ)
+#define PROGRAM_SPEED_REF_RAMP_RAD_S2         100.0f
+#define PROGRAM_CURRENT_REF_RAMP_A_PER_S      150.0f
 
 /*
  * 程序层遥测结构体：集中存放所有调试和监控变量。
@@ -126,39 +129,56 @@ typedef struct
     float fast_loop_period_us;              /* 快环周期 (μs，应为100) */
 } program_telemetry_t;
 
-/* 调试 PWM 全局控制实例 */
-extern volatile program_debug_pwm_t program_debug_pwm;  
-/* ADC2 DMA 循环缓冲：[0]=CH12(PB2), [1]=CH14(PB11) */
-extern volatile uint16_t g_adc2_dma_buf[ADC2_DMA_LEN]; 
-// 程序 telemetry 数据 
-extern volatile program_telemetry_t g_program_telemetry;
-extern ma600a_t g_ma600a;
-// FOC 核心对象，持有所有中间变量和输出  
-extern foc_core_t g_foc;
+/** 调试 PWM 测试参数 */
+typedef struct
+{
+    uint8_t enable;
+    float   duty_a;
+    float   duty_b;
+    float   duty_c;
+} program_debug_pwm_test_t;
 
-/**
- * 初始化程序
- */
-void Program_Init(void);
+/* ── 全局对象 extern 声明 ── */
+extern volatile program_telemetry_t      g_program_telemetry;
+extern volatile program_debug_pwm_test_t g_program_debug_pwm_test;
+extern motor_state_t g_motor;
+extern foc_core_t    g_foc;
 
-/**
- * 程序任务
- */
-void program_Task(void);
+/* ── 公共接口 ── */
+void program_init(void);
+void program_task(void);
+void program_tim_period_elapsed_callback(TIM_HandleTypeDef *htim);
+void program_adc_conv_cplt_callback(ADC_HandleTypeDef *hadc);
+void program_adc_injected_conv_cplt_callback(ADC_HandleTypeDef *hadc);
 
-/* 函数作用：启动 ADC2 DMA + TIM6 触发链，用于 VBUS/NTC 慢变量采样。
- * 输入：无。
- * 输出：无返回值；任一步失败则进入 Error_Handler()。
- * 调用频率：系统启动时只调用一次。
- * 运行内容：先启动 ADC2 DMA，再启动 TIM6 更新中断和 TRGO，让 ADC2 按 1 kHz 节拍采样两路慢变量。 
- */
-void program_start_adc2_dma_chain(void);
+/* ── 系统层导出（供 program_current.c / program_svpwm.c 调用）── */
+void     program_set_power_stage_enable(uint8_t enable);
+uint8_t  program_is_driver_fault_active(void);
+uint8_t  program_debug_pwm_test_is_enabled(void);
+void     program_apply_debug_pwm_test_output(void);
+void     program_apply_svpwm_to_tim1(const foc_svpwm_duty_t *duty);
+void     program_update_debug_telemetry(void);
 
+/* ── 快环控制函数（供 motor_state_task 调用） ── */
+void     program_reset_speed_loop(void);
+void     program_reset_position_loop(void);
+void     program_reset_current_loop(void);
+void     program_reset_speed_reference_ramp(void);
+void     program_reset_encoder_observer(void);
+void     program_reset_encoder_alignment(void);
+void     program_reset_encoder_align_runtime(void);
+void     program_capture_encoder_alignment_sample(void);
+float    program_get_encoder_alignment_angle_rad(void);
+float    program_get_control_elec_angle_rad(void);
+void     program_run_current_loop(float theta_cmd);
+void     program_run_voltage_mode(float theta_cmd);
+void     program_update_speed_loop(void);
+void     program_handle_position_loop_mode_switch(void);
+void     program_handle_current_loop_mode_switch(void);
 
-/* SVPWM 占空比应用到 TIM1 */
-void program_apply_svpwm_to_tim1(const foc_svpwm_duty_t *duty);
+/* ── 获取器 ── */
+const volatile program_telemetry_t *program_get_telemetry(void);
+motor_state_t *program_get_motor(void);
+foc_core_t     *program_get_foc(void);
 
-/* 获取 MA600A 数据 */
-void get_ma600a(ma600a_t *ma600a); 
-
-#endif /* __PROGRAM_H */
+#endif /* PROGRAM_H */

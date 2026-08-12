@@ -1,20 +1,107 @@
 #include "foc_core.h"
-#include "program_utils.h"
+
 #include <math.h>
 
 #define FOC_TWO_PI      6.28318530718f
 #define FOC_SQRT3       1.73205080757f
 #define FOC_INV_SQRT3   0.57735026919f
 
-/* ©¤©¤ Ç°ÖÃÉùÃ÷ ©¤©¤ */
-static void foc_core_inv_park(const foc_dq_t *v_dq, float sin_theta, float cos_theta, foc_alpha_beta_t *v_ab);
-static void foc_core_svpwm(foc_core_t *core, float u_alpha, float u_beta, float vbus);
+/* å‡½æ•°ä½œç”¨ï¼šé™åˆ¶æµ®ç‚¹é‡ä¸Šä¸‹ç•Œã€‚
+ * è¾“å…¥ï¼švalue ä¸ºå¾…é™åˆ¶å€¼ï¼Œmin_value/max_value ä¸ºä¸Šä¸‹é™ã€‚
+ * è¾“å‡ºï¼šè¿”å›é™å¹…åçš„ç»“æœã€‚
+ * è°ƒç”¨é¢‘ç‡ï¼šSVPWM å’Œè§’åº¦å¤„ç†æ—¶æŒ‰éœ€è°ƒç”¨ã€‚
+ * è¿è¡Œå†…å®¹ï¼šä¿è¯å ç©ºæ¯”ç­‰å…³é”®é‡å§‹ç»ˆåœ¨åˆæ³•èŒƒå›´å†…ã€‚ */
+static float foc_core_clamp(float value, float min_value, float max_value)
+{
+    if (value < min_value) {
+        return min_value;
+    }
 
-/* º¯Êı×÷ÓÃ£ºÉèÖÃµ±Ç°Ä¸ÏßµçÑ¹¡£
- * ÊäÈë£ºcore Îª FOC ¶ÔÏó£¬vbus ÎªÄ¸ÏßµçÑ¹£¬µ¥Î» V¡£
- * Êä³ö£ºÎŞ·µ»ØÖµ¡£
- * µ÷ÓÃÆµÂÊ£º²âÁ¿Á¿¸üĞÂºó°´½ÚÅÄµ÷ÓÃ¡£
- * ÔËĞĞÄÚÈİ£ºĞ´ÈëÄ¸ÏßµçÑ¹£¬²¢±£Ö¤×îĞ¡Öµ²»Ğ¡ÓÚ 1V¡£ */
+    if (value > max_value) {
+        return max_value;
+    }
+
+    return value;
+}
+
+/* å‡½æ•°ä½œç”¨ï¼šæŠŠè§’åº¦é™åˆ¶åˆ° 0~2piã€‚
+ * è¾“å…¥ï¼štheta ä¸ºä»»æ„æµ®ç‚¹è§’åº¦ï¼Œå•ä½ radã€‚
+ * è¾“å‡ºï¼šè¿”å›å½’ä¸€åŒ–åçš„è§’åº¦ã€‚
+ * è°ƒç”¨é¢‘ç‡ï¼šæ¯æ¬¡æ›´æ–°ç”µè§’åº¦æ—¶è°ƒç”¨ã€‚
+ * è¿è¡Œå†…å®¹ï¼šé€šè¿‡åŠ å‡ 2pi ä¿æŒè§’åº¦è¿ç»­å¹¶è½åœ¨ä¸€åœˆèŒƒå›´å†…ã€‚ */
+static float foc_core_wrap_angle(float theta)
+{
+    float turns;
+
+    if (!isfinite(theta)) {
+        return 0.0f;
+    }
+
+    turns = floorf(theta / FOC_TWO_PI);
+    theta -= turns * FOC_TWO_PI;
+
+    if (theta < 0.0f) {
+        theta += FOC_TWO_PI;
+    } else if (theta >= FOC_TWO_PI) {
+        theta -= FOC_TWO_PI;
+    }
+
+    return theta;
+}
+
+/* å‡½æ•°ä½œç”¨ï¼šåˆå§‹åŒ– FOC æ ¸å¿ƒå¯¹è±¡ã€‚
+ * è¾“å…¥ï¼šcore ä¸ºå¾…åˆå§‹åŒ–çš„ FOC å¯¹è±¡ã€‚
+ * è¾“å‡ºï¼šæ— è¿”å›å€¼ã€‚
+ * è°ƒç”¨é¢‘ç‡ï¼šç³»ç»Ÿå¯åŠ¨æ—¶è°ƒç”¨ä¸€æ¬¡ã€‚
+ * è¿è¡Œå†…å®¹ï¼šæ¸…é›¶ç”µæµ/ç”µå‹å˜é‡ï¼Œè®¾ç½®é»˜è®¤æ¯çº¿ç”µå‹å’Œä¸‰ç›¸ 50% å ç©ºæ¯”ã€‚ */
+void foc_core_init(foc_core_t *core)
+{
+    if (core == 0) {
+        return;
+    }
+
+    core->vbus = 24.0f;
+    core->theta_elec = 0.0f;
+    core->sin_theta = 0.0f;
+    core->cos_theta = 1.0f;
+    core->i_ab.alpha = 0.0f;
+    core->i_ab.beta = 0.0f;
+    core->i_dq.d = 0.0f;
+    core->i_dq.q = 0.0f;
+    core->v_dq_cmd.d = 0.0f;
+    core->v_dq_cmd.q = 0.0f;
+    core->v_ab_cmd.alpha = 0.0f;
+    core->v_ab_cmd.beta = 0.0f;
+    core->duty.duty_a = 0.5f;
+    core->duty.duty_b = 0.5f;
+    core->duty.duty_c = 0.5f;
+}
+
+/* å‡½æ•°ä½œç”¨ï¼šæŠŠ FOC è¾“å‡ºæ¢å¤åˆ°å®‰å…¨ä¸­å¿ƒæ€ã€‚
+ * è¾“å…¥ï¼šcore ä¸º FOC å¯¹è±¡ã€‚
+ * è¾“å‡ºï¼šæ— è¿”å›å€¼ã€‚
+ * è°ƒç”¨é¢‘ç‡ï¼šåœæœºã€å¾…æœºã€æ•…éšœæ—¶æŒ‰éœ€è°ƒç”¨ã€‚
+ * è¿è¡Œå†…å®¹ï¼šæ¸…é›¶ dq/ab ç”µå‹å‘½ä»¤ï¼Œå¹¶æŠŠä¸‰ç›¸å ç©ºæ¯”æ‹‰å› 50%ã€‚ */
+void foc_core_reset_output(foc_core_t *core)
+{
+    if (core == 0) {
+        return;
+    }
+
+    core->v_dq_cmd.d = 0.0f;
+    core->v_dq_cmd.q = 0.0f;
+    core->v_ab_cmd.alpha = 0.0f;
+    core->v_ab_cmd.beta = 0.0f;
+    core->duty.duty_a = 0.5f;
+    core->duty.duty_b = 0.5f;
+    core->duty.duty_c = 0.5f;
+}
+
+/* å‡½æ•°ä½œç”¨ï¼šè®¾ç½®å½“å‰æ¯çº¿ç”µå‹ã€‚
+ * è¾“å…¥ï¼šcore ä¸º FOC å¯¹è±¡ï¼Œvbus ä¸ºæ¯çº¿ç”µå‹ï¼Œå•ä½ Vã€‚
+ * è¾“å‡ºï¼šæ— è¿”å›å€¼ã€‚
+ * è°ƒç”¨é¢‘ç‡ï¼šæµ‹é‡é‡æ›´æ–°åæŒ‰èŠ‚æ‹è°ƒç”¨ã€‚
+ * è¿è¡Œå†…å®¹ï¼šå†™å…¥æ¯çº¿ç”µå‹ï¼Œå¹¶ä¿è¯æœ€å°å€¼ä¸å°äº 1Vã€‚ */
 void foc_core_set_bus_voltage(foc_core_t *core, float vbus)
 {
     if (core == 0) {
@@ -24,143 +111,151 @@ void foc_core_set_bus_voltage(foc_core_t *core, float vbus)
     core->vbus = vbus > 1.0f ? vbus : 1.0f;
 }
 
-/* º¯Êı×÷ÓÃ£º¸üĞÂµç½Ç¶È¼°ÆäÕıÓàÏÒ»º´æ¡£
- * ÊäÈë£ºcore Îª FOC ¶ÔÏó£¬theta_elec Îªµç½Ç¶È£¬µ¥Î» rad¡£
- * Êä³ö£ºÎŞ·µ»ØÖµ¡£
- * µ÷ÓÃÆµÂÊ£ºÃ¿´ÎÖ´ĞĞ FOC ¼ÆËãÊ±µ÷ÓÃ¡£
- * ÔËĞĞÄÚÈİ£ºÍê³É½Ç¶È¹éÒ»»¯£¬²¢Í¬²½¼ÆËã sin/cos ¹© Park/·´ Park ¸´ÓÃ¡£ 
- */
+/* å‡½æ•°ä½œç”¨ï¼šæ›´æ–°ç”µè§’åº¦åŠå…¶æ­£ä½™å¼¦ç¼“å­˜ã€‚
+ * è¾“å…¥ï¼šcore ä¸º FOC å¯¹è±¡ï¼Œtheta_elec ä¸ºç”µè§’åº¦ï¼Œå•ä½ radã€‚
+ * è¾“å‡ºï¼šæ— è¿”å›å€¼ã€‚
+ * è°ƒç”¨é¢‘ç‡ï¼šæ¯æ¬¡æ‰§è¡Œ FOC è®¡ç®—æ—¶è°ƒç”¨ã€‚
+ * è¿è¡Œå†…å®¹ï¼šå®Œæˆè§’åº¦å½’ä¸€åŒ–ï¼Œå¹¶åŒæ­¥è®¡ç®— sin/cos ä¾› Park/å Park å¤ç”¨ã€‚ */
 void foc_core_set_electrical_angle(foc_core_t *core, float theta_elec)
 {
-    // ¿ÕÖ¸Õë¼ì²é
     if (core == 0) {
         return;
     }
 
-    // ½Ç¶È¹éÒ»»¯µ½ [0, 2¦Ğ)
     core->theta_elec = foc_core_wrap_angle(theta_elec);
-    // Ô¤¼ÆËã sin/cos£¬¹© Park ±ä»»/·´ Park ¸´ÓÃ
     core->sin_theta = sinf(core->theta_elec);
     core->cos_theta = cosf(core->theta_elec);
 }
 
-/* º¯Êı×÷ÓÃ£º°Ñ½Ç¶ÈÏŞÖÆµ½ 0~2pi¡£
- * ÊäÈë£ºtheta ÎªÈÎÒâ¸¡µã½Ç¶È£¬µ¥Î» rad¡£
- * Êä³ö£º·µ»Ø¹éÒ»»¯ºóµÄ½Ç¶È¡£
- * µ÷ÓÃÆµÂÊ£ºÃ¿´Î¸üĞÂµç½Ç¶ÈÊ±µ÷ÓÃ¡£
- * ÔËĞĞÄÚÈİ£ºÍ¨¹ı¼Ó¼õ 2pi ±£³Ö½Ç¶ÈÁ¬Ğø²¢ÂäÔÚÒ»È¦·¶Î§ÄÚ¡£ */
-static float foc_core_wrap_angle(float theta)
+/* å‡½æ•°ä½œç”¨ï¼šæ‰§è¡Œ Clarke å˜æ¢ã€‚
+ * è¾“å…¥ï¼šia/ib/ic ä¸ºä¸‰ç›¸ç”µæµï¼Œå•ä½ Aã€‚
+ * è¾“å‡ºï¼šout ä¸­å¾—åˆ° alpha-beta åæ ‡ç”µæµã€‚
+ * è°ƒç”¨é¢‘ç‡ï¼šå½“å‰çº¦ 1 kHzï¼Œåç»­åº”æ”¾åˆ°ç”µæµå¿«ç¯ã€‚
+ * è¿è¡Œå†…å®¹ï¼šæŠŠä¸‰ç›¸é™æ­¢åæ ‡é‡æ˜ å°„åˆ°ä¸¤ç›¸ alpha-beta åæ ‡ã€‚ */
+void foc_core_clarke(float ia, float ib, foc_alpha_beta_t *out)
 {
-     // ½Ç¶È°üº¬µÄÕûÈ¦Êı
-    float turns;
-
-    // ¹ıÂË NaN/Inf
-    if (!isfinite(theta)) {
-        return 0.0f;
+    if (out == 0) {
+        return;
     }
 
-    // ¼ÆËãÕûÈ¦Êı
-    turns = floorf(theta / FOC_TWO_PI);
-    // ¼õÈ¥ÕûÈ¦£¬ÓàÊıÔÚ [0, 2¦Ğ) ¸½½ü
-    theta -= turns * FOC_TWO_PI;
+    /* Two-shunt Clarke: assume ia + ib + ic = 0, so alpha/beta only need ia and ib. */
+    out->alpha = ia;
+    out->beta = (ia + 2.0f * ib) * FOC_INV_SQRT3;
+}
 
-    // ´¦Àí¸º½Ç¶È£¨floor »áÏò¸ºÎŞÇîÈ¡Õû£©
-    if (theta < 0.0f) {
-        // ¸ºÓàÊı²¹ 2¦Ğ
-        theta += FOC_TWO_PI;
-    // ´¦Àí¸¡µã¾«¶Èµ¼ÖÂÇ¡ºÃµÈÓÚ 2¦Ğ
-    } else if (theta >= FOC_TWO_PI) {
-        theta -= FOC_TWO_PI;
+/* å‡½æ•°ä½œç”¨ï¼šæ‰§è¡Œ Park å˜æ¢ã€‚
+ * è¾“å…¥ï¼šab ä¸º alpha-beta åæ ‡é‡ï¼Œsin_theta/cos_theta ä¸ºå½“å‰è§’åº¦æ­£ä½™å¼¦ã€‚
+ * è¾“å‡ºï¼šout ä¸­å¾—åˆ° dq åæ ‡é‡ã€‚
+ * è°ƒç”¨é¢‘ç‡ï¼šå½“å‰çº¦ 1 kHzï¼Œåç»­åº”æ”¾åˆ°ç”µæµå¿«ç¯ã€‚
+ * è¿è¡Œå†…å®¹ï¼šæŠŠé™æ­¢åæ ‡é‡å˜æ¢åˆ°åŒæ­¥æ—‹è½¬åæ ‡ç³»ã€‚ */
+void foc_core_park(const foc_alpha_beta_t *ab, float sin_theta, float cos_theta, foc_dq_t *out)
+{
+    if ((ab == 0) || (out == 0)) {
+        return;
     }
 
-    // ¹éÒ»»¯µ½ [0, 2¦Ğ)
-    return theta;
+    out->d = ab->alpha * cos_theta + ab->beta * sin_theta;
+    out->q = -ab->alpha * sin_theta + ab->beta * cos_theta;
+}
+
+/* å‡½æ•°ä½œç”¨ï¼šæ‰§è¡Œå Park å˜æ¢ã€‚
+ * è¾“å…¥ï¼šdq ä¸ºåŒæ­¥åæ ‡å‘½ä»¤é‡ï¼Œsin_theta/cos_theta ä¸ºå½“å‰è§’åº¦æ­£ä½™å¼¦ã€‚
+ * è¾“å‡ºï¼šout ä¸­å¾—åˆ° alpha-beta åæ ‡é‡ã€‚
+ * è°ƒç”¨é¢‘ç‡ï¼šæ¯æ¬¡ç”Ÿæˆè°ƒåˆ¶ç”µå‹æ—¶è°ƒç”¨ã€‚
+ * è¿è¡Œå†…å®¹ï¼šæŠŠ dq å‘½ä»¤è½¬å›é™æ­¢åæ ‡ç³»ï¼Œä¾› SVPWM ä½¿ç”¨ã€‚ */
+void foc_core_inv_park(const foc_dq_t *dq, float sin_theta, float cos_theta, foc_alpha_beta_t *out)
+{
+    if ((dq == 0) || (out == 0)) {
+        return;
+    }
+
+    out->alpha = dq->d * cos_theta - dq->q * sin_theta;
+    out->beta = dq->d * sin_theta + dq->q * cos_theta;
+}
+
+/* å‡½æ•°ä½œç”¨ï¼šæ ¹æ® alpha-beta ç”µå‹ç”Ÿæˆä¸‰ç›¸ SVPWM å ç©ºæ¯”ã€‚
+ * è¾“å…¥ï¼šcore ä¸º FOC å¯¹è±¡ï¼Œv_alpha/v_beta ä¸ºé™æ­¢åæ ‡ç”µå‹ï¼Œvbus ä¸ºæ¯çº¿ç”µå‹ã€‚
+ * è¾“å‡ºï¼šç»“æœå†™å› core->dutyã€‚
+ * è°ƒç”¨é¢‘ç‡ï¼šæ¯æ¬¡æ›´æ–° PWM å‰è°ƒç”¨ä¸€æ¬¡ã€‚
+ * è¿è¡Œå†…å®¹ï¼šæŠŠç”µå‹æŠ•å½±åˆ°ä¸‰ç›¸ï¼Œæ³¨å…¥é›¶åºåç½®ï¼Œå¹¶æŠŠç»“æœé™å¹…åˆ° 0~1ã€‚ */
+void foc_core_svpwm(foc_core_t *core, float v_alpha, float v_beta, float vbus)
+{
+    float va_norm;
+    float vb_norm;
+    float vc_norm;
+    float vmax;
+    float vmin;
+    float offset;
+
+    if (core == 0) {
+        return;
+    }
+
+    if (vbus < 1.0f) {
+        core->duty.duty_a = 0.5f;
+        core->duty.duty_b = 0.5f;
+        core->duty.duty_c = 0.5f;
+        return;
+    }
+
+    va_norm = v_alpha / vbus;
+    vb_norm = (-0.5f * v_alpha + 0.5f * FOC_SQRT3 * v_beta) / vbus;
+    vc_norm = (-0.5f * v_alpha - 0.5f * FOC_SQRT3 * v_beta) / vbus;
+
+    vmax = va_norm;
+    if (vb_norm > vmax) {
+        vmax = vb_norm;
+    }
+    if (vc_norm > vmax) {
+        vmax = vc_norm;
+    }
+
+    vmin = va_norm;
+    if (vb_norm < vmin) {
+        vmin = vb_norm;
+    }
+    if (vc_norm < vmin) {
+        vmin = vc_norm;
+    }
+
+    offset = 0.5f - 0.5f * (vmax + vmin);
+
+    core->duty.duty_a = foc_core_clamp(va_norm + offset, 0.0f, 1.0f);
+    core->duty.duty_b = foc_core_clamp(vb_norm + offset, 0.0f, 1.0f);
+    core->duty.duty_c = foc_core_clamp(vc_norm + offset, 0.0f, 1.0f);
 }
 
 /*
- * µçÑ¹¿ª»·Ä£Ê½£º¸ø¶¨ ud/uq ºÍµç½Ç¶È£¬Ò»Õ¾Ê½Éú³ÉÈıÏà PWM Õ¼¿Õ±È¡£
- * ÄÚ²¿²½Öè£º¸üĞÂ vbus ¡ú ¸üĞÂ ¦Èe+sin/cos ¡ú ·´Park(¦Á¦Â) ¡ú SVPWM(Õ¼¿Õ±È)
- * ½á¹ûĞ´Èë core->duty£¬ÉÏ²ãµ÷ÓÃ program_apply_svpwm_to_tim1(&core->duty) ÏÂ·¢¡£
+ * ç”µå‹å¼€ç¯æ¨¡å¼ï¼šç»™å®š ud/uq å’Œç”µè§’åº¦ï¼Œä¸€ç«™å¼ç”Ÿæˆä¸‰ç›¸ PWM å ç©ºæ¯”ã€‚
+ * å†…éƒ¨æ­¥éª¤ï¼šæ›´æ–° vbus â†’ æ›´æ–° Î¸e+sin/cos â†’ åPark(Î±Î²) â†’ SVPWM(å ç©ºæ¯”)
+ * ç»“æœå†™å…¥ core->dutyï¼Œä¸Šå±‚è°ƒç”¨ program_apply_svpwm_to_tim1(&core->duty) ä¸‹å‘ã€‚
  */
 void foc_core_run_voltage_open_loop(foc_core_t *core,
-                                    float ud,          /* d ÖáµçÑ¹ÃüÁî (V) */
-                                    float uq,          /* q ÖáµçÑ¹ÃüÁî (V) */
-                                    float theta_elec,  /* µç½Ç¶È (rad)£¬¶ÔÆëÊ±Îª 0 */
-                                    float vbus)        /* Ä¸ÏßµçÑ¹ (V) */
+                                    float ud,          /* d è½´ç”µå‹å‘½ä»¤ (V) */
+                                    float uq,          /* q è½´ç”µå‹å‘½ä»¤ (V) */
+                                    float theta_elec,  /* ç”µè§’åº¦ (rad)ï¼Œå¯¹é½æ—¶ä¸º 0 */
+                                    float vbus)        /* æ¯çº¿ç”µå‹ (V) */
 {
     if (core == 0) {
         return;
     }
 
-    // ¢Ù ¸üĞÂÄ¸ÏßµçÑ¹£¬ÄÚ²¿º¬ ¡İ1V ±£»¤
+    // â‘  æ›´æ–°æ¯çº¿ç”µå‹ï¼Œå†…éƒ¨å« â‰¥1V ä¿æŠ¤
     foc_core_set_bus_voltage(core, vbus);
 
-    // ¢Ú ¹éÒ»»¯µç½Ç¶È + »º´æ sin¦È/cos¦È
+    // â‘¡ å½’ä¸€åŒ–ç”µè§’åº¦ + ç¼“å­˜ sinÎ¸/cosÎ¸
     foc_core_set_electrical_angle(core, theta_elec);
 
-    // ¢Û ¼ÇÂ¼ dq ÖáµçÑ¹ÃüÁî
+    // â‘¢ è®°å½• dq è½´ç”µå‹å‘½ä»¤
     core->v_dq_cmd.d = ud;
     core->v_dq_cmd.q = uq;
 
-    // ¢Ü ·´ Park ±ä»»£ºdq ¡ú ¦Á¦Â
+    // â‘£ å Park å˜æ¢ï¼šdq â†’ Î±Î²
     foc_core_inv_park(&core->v_dq_cmd,
                       core->sin_theta, core->cos_theta,
                       &core->v_ab_cmd);
 
-    // ¢İ SVPWM£º¦Á¦Â ¡ú ÈıÏàÕ¼¿Õ±È£¬Ğ´Èë core->duty
+    // â‘¤ SVPWMï¼šÎ±Î² â†’ ä¸‰ç›¸å ç©ºæ¯”ï¼Œå†™å…¥ core->duty
     foc_core_svpwm(core,
                    core->v_ab_cmd.alpha, core->v_ab_cmd.beta, core->vbus);
-}
-
-/*
- * ·´ Park ±ä»»£ºdq Ğı×ª×ø±êÏµ ¡ú ¦Á¦Â ¾²Ö¹×ø±êÏµ
- * u_alpha = ud*cos¦È - uq*sin¦È
- * u_beta  = ud*sin¦È + uq*cos¦È
- */
-static void foc_core_inv_park(const foc_dq_t *v_dq,
-                              float sin_theta, float cos_theta,
-                              foc_alpha_beta_t *v_ab)
-{
-    v_ab->alpha = v_dq->d * cos_theta - v_dq->q * sin_theta;
-    v_ab->beta  = v_dq->d * sin_theta + v_dq->q * cos_theta;
-}
-
-/*
- * ¼òÒ× SVPWM£º¦Á¦Â µçÑ¹ ¡ú ÈıÏàÕ¼¿Õ±È£¨Èı´ÎĞ³²¨×¢Èë·¨£©
- * Õ¼¿Õ±È·¶Î§ [0, 1]£¬½á¹ûĞ´Èë core->duty
- */
-static void foc_core_svpwm(foc_core_t *core,
-                           float u_alpha, float u_beta, float vbus)
-{
-    // Clarke ·´±ä»»£º¦Á¦Â ¡ú ÈıÏà
-    float va = u_alpha;
-    float vb = -0.5f * u_alpha + 0.86602540378f * u_beta;
-    float vc = -0.5f * u_alpha - 0.86602540378f * u_beta;
-
-    // Èı´ÎĞ³²¨×¢Èë£ºÕÒ vmax/vmin£¬¼ÆËãÆ«ÒÆÁ¿
-    float vmax = va;
-    if (vb > vmax) {
-        vmax = vb;
-    }
-    if (vc > vmax) {
-        vmax = vc;
-    }
-    float vmin = va;
-    if (vb < vmin) {
-        vmin = vb;
-    }
-    if (vc < vmin) {
-        vmin = vc;
-    }
-    float v_offset = (vmax + vmin) * 0.5f;
-
-    va -= v_offset;
-    vb -= v_offset;
-    vc -= v_offset;
-
-    // ¹éÒ»»¯µ½Õ¼¿Õ±È [0, 1]£¬º¬ÏŞ·ù±£»¤
-    float scale = 1.0f / (vbus * 0.57735026919f);  // v_limit = vbus / ¡Ì3
-    core->duty.a = program_clamp_f32(0.5f + va * scale, 0.0f, 1.0f);
-    core->duty.b = program_clamp_f32(0.5f + vb * scale, 0.0f, 1.0f);
-    core->duty.c = program_clamp_f32(0.5f + vc * scale, 0.0f, 1.0f);
 }

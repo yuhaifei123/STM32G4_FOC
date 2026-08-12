@@ -1299,44 +1299,34 @@
           <GroupName>App</GroupName>
           <Files>
             <File>
-              <FileName>program.c</FileName>
+              <FileName>cli_uart.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\Core\App\program.c</FilePath>
+              <FilePath>..\Core\App\cli_uart.c</FilePath>
             </File>
             <File>
-              <FileName>program.h</FileName>
+              <FileName>cli_uart.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\Core\App\program.h</FilePath>
+              <FilePath>..\Core\App\cli_uart.h</FilePath>
             </File>
             <File>
-              <FileName>ma600a.c</FileName>
+              <FileName>drv_pid.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\Core\App\ma600a.c</FilePath>
+              <FilePath>..\Core\App\drv_pid.c</FilePath>
             </File>
             <File>
-              <FileName>ma600a.h</FileName>
+              <FileName>drv_pid.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\Core\App\ma600a.h</FilePath>
+              <FilePath>..\Core\App\drv_pid.h</FilePath>
             </File>
             <File>
-              <FileName>program_utils.c</FileName>
+              <FileName>filter.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\Core\App\program_utils.c</FilePath>
+              <FilePath>..\Core\App\filter.c</FilePath>
             </File>
             <File>
-              <FileName>program_utils.h</FileName>
+              <FileName>filter.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\Core\App\program_utils.h</FilePath>
-            </File>
-            <File>
-              <FileName>program_current.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\App\program_current.c</FilePath>
-            </File>
-            <File>
-              <FileName>program_current.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\Core\App\program_current.h</FilePath>
+              <FilePath>..\Core\App\filter.h</FilePath>
             </File>
             <File>
               <FileName>foc_core.c</FileName>
@@ -1349,9 +1339,54 @@
               <FilePath>..\Core\App\foc_core.h</FilePath>
             </File>
             <File>
-              <FileName>drv_pid.c</FileName>
+              <FileName>ma600a.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\Core\App\drv_pid.c</FilePath>
+              <FilePath>..\Core\App\ma600a.c</FilePath>
+            </File>
+            <File>
+              <FileName>ma600a.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\ma600a.h</FilePath>
+            </File>
+            <File>
+              <FileName>motor_params.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\App\motor_params.c</FilePath>
+            </File>
+            <File>
+              <FileName>motor_params.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\motor_params.h</FilePath>
+            </File>
+            <File>
+              <FileName>motor_state.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\App\motor_state.c</FilePath>
+            </File>
+            <File>
+              <FileName>motor_state.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\motor_state.h</FilePath>
+            </File>
+            <File>
+              <FileName>program.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\App\program.c</FilePath>
+            </File>
+            <File>
+              <FileName>program.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\program.h</FilePath>
+            </File>
+            <File>
+              <FileName>program_current.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\App\program_current.c</FilePath>
+            </File>
+            <File>
+              <FileName>program_current.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\App\program_current.h</FilePath>
             </File>
             <File>
               <FileName>program_svpwm.c</FileName>
@@ -1364,19 +1399,14 @@
               <FilePath>..\Core\App\program_svpwm.h</FilePath>
             </File>
             <File>
-              <FileName>drv_pid.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\Core\App\drv_pid.h</FilePath>
-            </File>
-            <File>
-              <FileName>motor_params.c</FileName>
+              <FileName>program_utils.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\Core\App\motor_params.c</FilePath>
+              <FilePath>..\Core\App\program_utils.c</FilePath>
             </File>
             <File>
-              <FileName>motor_params.h</FileName>
+              <FileName>program_utils.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\Core\App\motor_params.h</FilePath>
+              <FilePath>..\Core\App\program_utils.h</FilePath>
             </File>
           </Files>
         </Group>

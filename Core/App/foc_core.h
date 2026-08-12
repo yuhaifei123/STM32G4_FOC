@@ -1,39 +1,47 @@
 #ifndef FOC_CORE_H
-#define FOC_CORE_H  
+#define FOC_CORE_H
 
-#include "stm32g4xx_hal.h"
+/*
+ * 本模块是 FOC（磁场定向控制）的数学核心，负责坐标系变换和 SVPWM 生成。
+ * 不涉及任何硬件寄存器操作，纯 C 计算库。
+ *
+ * 信号流向：
+ *   三相电流(ia,ib) ──Clarke──→ (iα,iβ) ──Park──→ (id,iq)  → PI控制
+ *   PI输出(ud,uq) ──反Park──→ (vα,vβ) ──SVPWM──→ 三相占空比 → TIM1
+ */
 
-/* ────────── 坐标系类型（须在 foc_core_t 之前定义）────────── */
-
-/* 两相静止坐标系 (α-β)，由 Clarke 变换产生 */
-typedef struct {
+/* ── 两相静止坐标系 (α-β)，由 Clarke 变换产生 ── */
+/* α 轴与 A 相重合，β 轴超前 α 90° */
+typedef struct
+{
     float alpha;  /* α 轴分量 */
     float beta;   /* β 轴分量 */
 } foc_alpha_beta_t;
 
-/* 两相旋转坐标系 (d-q)，由 Park 变换产生
- * d 轴与转子磁场平行（励磁分量），q 轴超前 d 90°（转矩分量） */
-typedef struct {
+/* ── 两相旋转坐标系 (d-q)，由 Park 变换产生 ── */
+/* d 轴与转子磁场平行（励磁分量），q 轴超前 d 90°（转矩分量） */
+typedef struct
+{
     float d;  /* d 轴分量（励磁电流 id，控制磁场强度） */
     float q;  /* q 轴分量（转矩电流 iq，控制输出扭矩） */
 } foc_dq_t;
 
-/* SVPWM 三相占空比输出 */
-typedef struct {
-    float a;  /* A 相占空比 (0.0 ~ 1.0) */
-    float b;  /* B 相占空比 (0.0 ~ 1.0) */
-    float c;  /* C 相占空比 (0.0 ~ 1.0) */
+/* ── 三相 PWM 占空比，由 SVPWM 生成，取值范围 0.0 ~ 1.0 ── */
+/* 0.5 = 上下桥各 50%（零矢量），0.0 = 上桥全关，1.0 = 上桥全开 */
+typedef struct
+{
+    float duty_a;  /* A 相 (U 相) 占空比 → TIM1_CH1 */
+    float duty_b;  /* B 相 (V 相) 占空比 → TIM1_CH2 */
+    float duty_c;  /* C 相 (W 相) 占空比 → TIM1_CH3 */
 } foc_svpwm_duty_t;
 
-/* ────────────────────────────────────────────────────────────────────────── */
-/* FOC 核心对象，持有所有中间变量和输出                                    */
-/* ────────────────────────────────────────────────────────────────────────── */
+/* ── FOC 核心对象，持有所有中间变量和输出 ── */
 typedef struct
 {
     /* 系统状态 */
     float vbus;          /* 母线电压 (V)，用于 SVPWM 电压归一化 */
     float theta_elec;    /* 当前电角度 (rad)，已归一化到 [0, 2π) */
-    float sin_theta;     /* sin(θe) 缓存，供 Park/反Park 复用，避免重复计算 */
+    float sin_theta;     /* sin(θe) 缓存，供 Park/反Park 复用 */
     float cos_theta;     /* cos(θe) 缓存 */
 
     /* 电流反馈：ADC → Clarke → Park */
@@ -48,37 +56,37 @@ typedef struct
     foc_svpwm_duty_t duty;  /* 三相 PWM 占空比，直接写入 TIM1 CCR */
 } foc_core_t;
 
-/* 函数作用：设置当前母线电压。
- * 输入：core 为 FOC 对象，vbus 为母线电压，单位 V。
- * 输出：无返回值。
- * 调用频率：测量量更新后按节拍调用。
- * 运行内容：写入母线电压，并保证最小值不小于 1V。 */
+/* ── API ── */
+
+/* 初始化 FOC 核心对象，清零所有变量，占空比默认 50%（零矢量） */
+void foc_core_init(foc_core_t *core);
+
+/* 复位输出：清零电压命令 + 三相占空比拉回 50% */
+void foc_core_reset_output(foc_core_t *core);
+
+/* 更新母线电压（最小值保护为 1V，避免除零） */
 void foc_core_set_bus_voltage(foc_core_t *core, float vbus);
 
-/* 函数作用：更新电角度及其正余弦缓存。
- * 输入：core 为 FOC 对象，theta_elec 为电角度，单位 rad。
- * 输出：无返回值。
- * 调用频率：每次执行 FOC 计算时调用。
- * 运行内容：完成角度归一化，并同步计算 sin/cos 供 Park/反 Park 复用。 
- */
+/* 更新电角度并同步计算 sinθ / cosθ 缓存 */
 void foc_core_set_electrical_angle(foc_core_t *core, float theta_elec);
 
-/* 函数作用：把角度限制到 0~2pi。
- * 输入：theta 为任意浮点角度，单位 rad。
- * 输出：返回归一化后的角度。
- * 调用频率：每次更新电角度时调用。
- * 运行内容：通过加减 2pi 保持角度连续并落在一圈范围内。 */
-static float foc_core_wrap_angle(float theta);
+/* Clarke 变换：三相静止 (ia, ib) → 两相静止 (α, β) */
+void foc_core_clarke(float ia, float ib, foc_alpha_beta_t *out);
 
-/*
- * 电压开环模式：给定 ud/uq 和电角度，一站式生成三相 PWM 占空比。
- * 内部步骤：更新 vbus → 更新 θe+sin/cos → 反Park(αβ) → SVPWM(占空比)
- * 结果写入 core->duty，上层调用 program_apply_svpwm_to_tim1(&core->duty) 下发。
- */
+/* Park 变换：两相静止 (α, β) → 两相旋转 (d, q) */
+void foc_core_park(const foc_alpha_beta_t *ab, float sin_theta, float cos_theta, foc_dq_t *out);
+
+/* 反 Park 变换：两相旋转 (d, q) → 两相静止 (α, β) */
+void foc_core_inv_park(const foc_dq_t *dq, float sin_theta, float cos_theta, foc_alpha_beta_t *out);
+
+/* SVPWM：两相静止电压 (vα, vβ) → 三相占空比 */
+void foc_core_svpwm(foc_core_t *core, float v_alpha, float v_beta, float vbus);
+
+/* 一键式电压开环输出：反Park + SVPWM 串行调用 */
 void foc_core_run_voltage_open_loop(foc_core_t *core,
-                                    float ud,          /* d 轴电压命令 (V) */
-                                    float uq,          /* q 轴电压命令 (V) */
-                                    float theta_elec,  /* 电角度 (rad)，对齐时为 0 */
-                                    float vbus) ;       /* 母线电压 (V) */
+                                    float ud,
+                                    float uq,
+                                    float theta_elec,
+                                    float vbus);
 
-#endif // 
+#endif /* FOC_CORE_H */

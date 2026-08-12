@@ -60,6 +60,9 @@ void Error_Handler(void);
 // SPI 通讯使能
 #define SPI1_NSS_Pin GPIO_PIN_4      
 #define SPI1_NSS_GPIO_Port GPIOA
+/* 编码器片选（与 SPI1_NSS 共用 PA4） */
+#define ENC_CS_Pin       GPIO_PIN_4
+#define ENC_CS_GPIO_Port GPIOA
 // 高 = 正常工作, 低电平 = 进入休眠，关闭驱动
 #define N_SLEEP_Pin GPIO_PIN_14       
 #define N_SLEEP_GPIO_Port GPIOB

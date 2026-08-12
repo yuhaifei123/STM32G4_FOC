@@ -1,61 +1,49 @@
-#ifndef  MA600A_H
-#define  MA600A_H
-#include "stm32g4xx_hal.h"
-#include "program_utils.h"
+#ifndef MA600A_H
+#define MA600A_H
 
-/*
- * MA600A SPI Ğ­Òé£º16bit Ö¡£¬·¢ËÍÈ« 0 ¼´¶Á½Ç¶È£¬·µ»Ø¸ñÊ½£º
- * ©°©¤©¤©¤©¤©¤©¤©¤©¤©Ğ©¤©¤©¤©¤©¤©¤©¤©¤©Ğ©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©´
- * ©¦ bit15  ©¦ bit14  ©¦ bit13 ~ bit0          ©¦
- * ©¦ ±£Áô   ©¦ ÓĞĞ§Î»  ©¦ 14bit ½Ç¶ÈÂë (0~16383) ©¦
- * ©¸©¤©¤©¤©¤©¤©¤©¤©¤©Ø©¤©¤©¤©¤©¤©¤©¤©¤©Ø©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¼
- * ¾«¶È£º360¡ã / 16384 ¡Ö 0.022¡ã
- */
-/* ¶ÁÈ¡½Ç¶ÈµÄ SPI ÃüÁî×Ö£º·¢ËÍ 0x0000 ¼´¿É»ñÈ¡µ±Ç°½Ç¶È */
-#define MA600A_CMD_ANGLE 0X0000
+#include <stdint.h>
 
-/* ÌáÈ¡ bit14 ÓĞĞ§±êÖ¾£º0x4000 = 0100_0000_0000_0000 */
-/* Èô (rx_data & 0x4000) == 0 ¡ú Êı¾İÎŞĞ§£¬Ğè¶ªÆú */
-#define MA600A_ANGLE_VALID_MASK 0x4000
+#include "spi.h"
 
-/* ÌáÈ¡ bit13~0 ½Ç¶ÈÊı¾İ£º0x3FFF = 0011_1111_1111_1111 */
-/* ½Ç¶ÈÂë = rx_data & 0x3FFF£¬·¶Î§ 0 ~ 16383 */
-#define MA600A_ANGLE_DATA_MASK   0x3FFF
-
-
-/* MA600A ´Å±àÂëÆ÷Éè±¸¶ÔÏó£¬Í¨¹ı SPI1 »ñÈ¡×ª×Ó¾ø¶Ô»úĞµ½Ç¶È */
+/* MA600A ç£ç¼–ç å™¨è®¾å¤‡å¯¹è±¡ï¼Œé€šè¿‡ SPI1 è·å–è½¬å­ç»å¯¹æœºæ¢°è§’åº¦ */
 typedef struct
 {
-    SPI_HandleTypeDef *hspi;        /* SPI ¾ä±ú£¨SPI1£© */
-    GPIO_TypeDef *cs_port;          /* Æ¬Ñ¡¶Ë¿Ú£¨PA4£© */
-    uint16_t cs_pin;                /* Æ¬Ñ¡Òı½Å±àºÅ */
-    uint16_t tx_word;               /* ·¢ËÍÃüÁî×Ö 0x0000 */
-    uint16_t rx_word;               /* ½ÓÊÕÊı¾İ×Ö */
-    uint16_t angle_raw;             /* Ô­Ê¼½Ç¶ÈÂë 0~16383 */
-    float angle_deg;                /* ½Ç¶ÈÖÆ 0¡ã~360¡ã */
-    float angle_rad;                /* »¡¶ÈÖÆ 0~2¦Ğ */
-    uint8_t data_valid;             /* Êı¾İÓĞĞ§±êÖ¾ */
-    uint8_t transfer_busy;          /* ´«ÊäÃ¦±êÖ¾ */
-    uint8_t consecutive_bad_count;  /* Á¬ĞøÒì³£¼ÆÊı */
-    uint32_t sample_counter;        /* ÀÛ¼Æ²ÉÑù´ÎÊı */
-    uint32_t reject_count;          /* Ìø±ä¾Ü¾ø´ÎÊı */
-    uint32_t comm_error_count;      /* Í¨ĞÅÊ§°Ü´ÎÊı */
+    SPI_HandleTypeDef *hspi;        /* SPI å¥æŸ„ï¼ˆSPI1ï¼‰ */
+    GPIO_TypeDef *cs_port;          /* ç‰‡é€‰ç«¯å£ï¼ˆPA4ï¼‰ */
+    uint16_t cs_pin;                /* ç‰‡é€‰å¼•è„šç¼–å· */
+    uint16_t tx_word;               /* å‘é€å‘½ä»¤å­— 0x0000 */
+    uint16_t rx_word;               /* æ¥æ”¶æ•°æ®å­— */
+    uint16_t angle_raw;             /* åŸå§‹è§’åº¦ç  0~16383 */
+    float angle_deg;                /* è§’åº¦åˆ¶ 0Â°~360Â° */
+    float angle_rad;                /* å¼§åº¦åˆ¶ 0~2Ï€ */
+    uint8_t data_valid;             /* æ•°æ®æœ‰æ•ˆæ ‡å¿— */
+    uint8_t transfer_busy;          /* ä¼ è¾“å¿™æ ‡å¿— */
+    uint8_t consecutive_bad_count;  /* è¿ç»­å¼‚å¸¸è®¡æ•° */
+    uint32_t sample_counter;        /* ç´¯è®¡é‡‡æ ·æ¬¡æ•° */
+    uint32_t reject_count;          /* è·³å˜æ‹’ç»æ¬¡æ•° */
+    uint32_t comm_error_count;      /* é€šä¿¡å¤±è´¥æ¬¡æ•° */
 } ma600a_t;
 
-/**
- * ³õÊ¼»¯ MA600A ´Å±àÂëÆ÷Éè±¸¶ÔÏó
- * @param ma600a       MA600A ´Å±àÂëÆ÷Éè±¸¶ÔÏó
- * @param hspi         SPI ¾ä±ú£¨SPI1£©
- * @param cs_port      Æ¬Ñ¡¶Ë¿Ú£¨PA4£©
- * @param cs_pin       Æ¬Ñ¡Òı½Å±àºÅ
+/* å‡½æ•°ä½œç”¨ï¼šåˆå§‹åŒ– MA600A è®¾å¤‡å¯¹è±¡å¹¶ç»‘å®šåº•å±‚ SPI ä¸ç‰‡é€‰å¼•è„šã€‚
+ * è¾“å…¥ï¼šsensor ä¸ºè®¾å¤‡å¯¹è±¡æŒ‡é’ˆï¼Œhspi ä¸ºå·²å®Œæˆ CubeMX åˆå§‹åŒ–çš„ SPI å¥æŸ„ï¼Œ
+ *      cs_port/cs_pin ä¸ºç¼–ç å™¨ç‰‡é€‰å¼•è„šã€‚
+ * è¾“å‡ºï¼šæ— è¿”å›å€¼ã€‚
+ * è¿è¡Œé¢‘ç‡ï¼šç³»ç»Ÿä¸Šç”µåˆå§‹åŒ–æ—¶è°ƒç”¨ 1 æ¬¡ã€‚
+ * è¿è¡Œå†…å®¹ï¼šä¿å­˜é©±åŠ¨ä¾èµ–ã€æ¸…é›¶è§’åº¦ç¼“å­˜ï¼Œå¹¶æŠŠç‰‡é€‰è„šæ‹‰é«˜åˆ°ç©ºé—²çŠ¶æ€ã€‚
  */
-void ma600a_init(ma600a_t *ma600a, SPI_HandleTypeDef *hspi, GPIO_TypeDef *cs_port, uint16_t cs_pin);
+void ma600a_init(ma600a_t *sensor, SPI_HandleTypeDef *hspi, GPIO_TypeDef *cs_port, uint16_t cs_pin);
 
-/**
- * ¶ÁÈ¡½Ç¶ÈÊı¾İ
- * @param enc          MA600A ´Å±àÂëÆ÷Éè±¸¶ÔÏó
- * @return             Êı¾İÓĞĞ§±êÖ¾
+/* å‡½æ•°ä½œç”¨ï¼šè¯»å– MA600A å½“å‰æœºæ¢°ç»å¯¹è§’åº¦ã€‚
+ * è¾“å…¥ï¼šsensor ä¸ºå·²å®Œæˆåˆå§‹åŒ–çš„ MA600A è®¾å¤‡å¯¹è±¡ã€‚
+ * è¾“å‡ºï¼šè¿”å› 1 è¡¨ç¤ºæœ¬æ¬¡ SPI è¯»å–æˆåŠŸï¼Œè¿”å› 0 è¡¨ç¤ºè¯»å–å¤±è´¥ã€‚
+ * è¿è¡Œé¢‘ç‡ï¼šå½“å‰å»ºè®®æ”¾åœ¨åå°æ…¢ä»»åŠ¡ä¸­çº¦ 1 kHz è°ƒç”¨ï¼Œåç»­ä¹Ÿå¯è¿ç§»åˆ°æ§åˆ¶èŠ‚æ‹é‡Œã€‚
+ * è¿è¡Œå†…å®¹ï¼šåœ¨å½“å‰ CubeMX é…ç½®çš„ 16bit SPI å¸§ä¸‹å‘é€ 1 ä¸ªç©ºå‘½ä»¤å­—ï¼Œ
+ *      è¯»å–è¿”å›çš„ 16bit è§’åº¦ç ï¼Œå¹¶åŒæ­¥æ¢ç®—æˆè§’åº¦åˆ¶ä¸å¼§åº¦åˆ¶ã€‚
  */
-uint8_t ma600a_read_angle(ma600a_t *enc);
+/* Called from the 10 kHz fast-loop ISR to kick the next SPI transfer. */
+uint8_t ma600a_read_angle(ma600a_t *sensor);
 
-#endif // !MA600A_H
+void ma600a_spi_txrx_cplt_callback(ma600a_t *sensor, SPI_HandleTypeDef *hspi);
+void ma600a_spi_error_callback(ma600a_t *sensor, SPI_HandleTypeDef *hspi);
+
+#endif /* MA600A_H */

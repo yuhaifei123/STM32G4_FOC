@@ -29,6 +29,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include "Common_Utils.h"
+#include "program.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -100,6 +101,7 @@ int main(void)
   MX_ADC2_Init();
   MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
+  program_init();
 
   /* USER CODE END 2 */
 
@@ -110,9 +112,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_Delay(100);
-    //com_PrintData("Hello, World!\r\n", 14);
-    com_test();
+    program_task();
   }
   /* USER CODE END 3 */
 }

@@ -1,26 +1,35 @@
-#ifndef FOC_PID_H
-#define FOC_PID_H
+#ifndef _DRV_PID_
+#define _DRV_PID_
 
-#include "stm32g4xx_hal.h"
-#include "main.h"
-#include "adc.h"
-#include "tim.h"
-#include <math.h>
-#include "program.h"
-#include "foc_core.h"
+#include <stdint.h>
 
-/**
- * 带抗饱和的浮点 PI 控制器
- * @param ref       目标值
- * @param fb        反馈值
- * @param kp        比例增益
- * @param ki        积分增益
- * @param dt        控制周期 (s)
- * @param integral  积分项指针（跨调用保持）
- * @param lo        输出下限
- * @param hi        输出上限
- * @return 限幅后的 PI 输出
- */
-float run_pi_f32(float ref, float fb, float kp, float ki,float dt, float *integral, float lo, float hi);
+/** Q15 定点 PI 控制器对象 */
+typedef struct {
+    int32_t ref;
+    int32_t feedback;
+    int32_t error;
+    int32_t kp_q15;
+    int32_t ki_q15;
+    int32_t p_out;
+    int32_t i_out;
+    int32_t output;
+    int32_t i_term_q15;
+    int32_t out_min;
+    int32_t out_max;
+} drv_pid_pi_t;
 
-#endif // !FOC_PID_H
+/* PI控制器初始化；输入输出量纲必须在上层先统一好。 */
+void drv_pid_pi_init(drv_pid_pi_t *pid,
+                     int32_t kp_q15,
+                     int32_t ki_q15,
+                     int32_t out_min,
+                     int32_t out_max,
+                     int32_t out_init);
+
+/* 复位积分项；适合模式切换或故障恢复后重新接管。 */
+void drv_pid_pi_reset(drv_pid_pi_t *pid, int32_t out_init);
+
+/* 执行一次PI更新；ref与feedback量纲必须一致，运行结果会回写到结构体里。 */
+int32_t drv_pid_pi_step(drv_pid_pi_t *pid, int32_t ref, int32_t feedback);
+
+#endif /* _DRV_PID_ */

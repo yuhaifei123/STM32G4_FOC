@@ -1,70 +1,210 @@
 #include "ma600a.h"
 
+#define MA600A_FULL_SCALE_COUNTS_F         65536.0f
+#define MA600A_FULL_SCALE_COUNTS_U32       65536UL
+#define MA600A_HALF_SCALE_COUNTS           32768L
+#define MA600A_ANGLE_CMD                   0x0000U
+#define MA600A_TWO_PI                      6.28318530718f
+#define MA600A_MAX_JUMP_COUNTS             1024L
+#define MA600A_MAX_CONSECUTIVE_BAD_SAMPLES 4U
 
-/**
- * ��ʼ�� MA600A �ű������豸����
- * @param ma600a       MA600A �ű������豸����
- * @param hspi         SPI �����SPI1��
- * @param cs_port      Ƭѡ�˿ڣ�PA4��
- * @param cs_pin       Ƭѡ���ű��
+/* 函数作用：把 MA600A 片选脚拉低，开始一次 SPI 帧传输。
+ * 输入：sensor 为已完成初始化的 MA600A 设备对象。
+ * 输出：无返回值。
+ * 运行频率：每次读取角度前调用 1 次。
+ * 运行内容：把编码器片选脚拉低，让外部编码器进入当前 SPI 帧。
  */
-void ma600a_init(ma600a_t *ma600a, SPI_HandleTypeDef *hspi, GPIO_TypeDef *cs_port, uint16_t cs_pin)
+static void ma600a_cs_low(const ma600a_t *sensor)
 {
-    ma600a->hspi = hspi;
-    ma600a->cs_port = cs_port;
-    ma600a->cs_pin = cs_pin;
-    ma600a->tx_word = 0x0000;
-    ma600a->rx_word = 0x0000;
-    ma600a->angle_raw = 0x0000;
-    ma600a->angle_deg = 0.0f;
-    ma600a->angle_rad = 0.0f;
-    ma600a->data_valid = 0;
-    ma600a->transfer_busy = 0;
-    ma600a->consecutive_bad_count = 0;
-    ma600a->sample_counter = 0;
-    ma600a->reject_count = 0;
-    ma600a->comm_error_count = 0;
+    HAL_GPIO_WritePin(sensor->cs_port, sensor->cs_pin, GPIO_PIN_RESET);
 }
 
-/**
- * ��ȡ�Ƕ�����
- * @param enc          MA600A �ű������豸����
- * @return             ������Ч��־
+/* 函数作用：把 MA600A 片选脚拉高，结束一次 SPI 帧传输。
+ * 输入：sensor 为已完成初始化的 MA600A 设备对象。
+ * 输出：无返回值。
+ * 运行频率：每次读取角度后调用 1 次。
+ * 运行内容：释放编码器片选脚，使总线回到空闲状态。
  */
-uint8_t ma600a_read_angle(ma600a_t *enc)
+static void ma600a_cs_high(const ma600a_t *sensor)
 {
-    enc->tx_word = MA600A_CMD_ANGLE;
-    enc->rx_word = 0;
+    HAL_GPIO_WritePin(sensor->cs_port, sensor->cs_pin, GPIO_PIN_SET);
+}
 
-    // ��ȡ�Ƕ�����
-    HAL_GPIO_WritePin(enc->cs_port, enc->cs_pin, GPIO_PIN_RESET);
-    HAL_StatusTypeDef status = HAL_SPI_TransmitReceive(enc->hspi, (uint8_t*)&enc->tx_word, (uint8_t*)&enc->rx_word, 1, 100);
-    HAL_GPIO_WritePin(enc->cs_port, enc->cs_pin, GPIO_PIN_SET);
+/* 函数作用：把 16bit 原始角度码换算成角度制与弧度制。
+ * 输入：sensor 为设备对象，angle_raw 为编码器返回的 16bit 原始角度码。
+ * 输出：无返回值。
+ * 运行频率：每次成功读到角度后调用 1 次。
+ * 运行内容：保存原始计数，并同步更新角度制和弧度制结果，供 debug 与上层控制读取。
+ */
+static void ma600a_update_angle_cache(ma600a_t *sensor, uint16_t angle_raw)
+{
+    sensor->angle_raw = angle_raw;
+    sensor->angle_deg = ((float)angle_raw * 360.0f) / MA600A_FULL_SCALE_COUNTS_F;
+    sensor->angle_rad = ((float)angle_raw * MA600A_TWO_PI) / MA600A_FULL_SCALE_COUNTS_F;
+    sensor->data_valid = 1U;
+    sensor->consecutive_bad_count = 0U;
+    sensor->sample_counter++;
+}
 
-    enc->sample_counter++;
-    if (status != HAL_OK)
-    {
-        enc->comm_error_count++;
-        enc->consecutive_bad_count++;
-        enc->data_valid = 0;
-        return 0;
+static int32_t ma600a_delta_counts(uint16_t current_angle_raw, uint16_t previous_angle_raw)
+{
+    int32_t delta_counts;
+
+    delta_counts = (int32_t)current_angle_raw - (int32_t)previous_angle_raw;
+
+    if (delta_counts > MA600A_HALF_SCALE_COUNTS) {
+        delta_counts -= (int32_t)MA600A_FULL_SCALE_COUNTS_U32;
+    } else if (delta_counts < -MA600A_HALF_SCALE_COUNTS) {
+        delta_counts += (int32_t)MA600A_FULL_SCALE_COUNTS_U32;
     }
 
-    // �жϽ��յ������Ƿ���ȷ
-    if (enc->rx_word & MA600A_ANGLE_VALID_MASK == 0)
-    {
-        enc->comm_error_count++;
-        enc->consecutive_bad_count++;
-        enc->data_valid = 0;
-        return 0;  
+    return delta_counts;
+}
+
+static uint8_t ma600a_sample_is_plausible(const ma600a_t *sensor, uint16_t angle_raw)
+{
+    int32_t delta_counts;
+
+    if ((sensor == 0) || (sensor->data_valid == 0U) || (sensor->sample_counter == 0U)) {
+        return 1U;
     }
 
-    enc->consecutive_bad_count = 0;
-    enc->angle_raw = enc->rx_word & MA600A_ANGLE_DATA_MASK;
-    // �Ƕ���
-    enc->angle_deg = (float)enc->angle_raw * 360.0f / 16384.0f;
-    // ������
-    enc->angle_rad = (float)enc->angle_raw * TWO_PI/ 16384.0f;
-    enc->data_valid = 1;    
-    return 1;
+    delta_counts = ma600a_delta_counts(angle_raw, sensor->angle_raw);
+    if ((delta_counts > MA600A_MAX_JUMP_COUNTS) || (delta_counts < -MA600A_MAX_JUMP_COUNTS)) {
+        return 0U;
+    }
+
+    return 1U;
+}
+
+static void ma600a_note_bad_sample(ma600a_t *sensor, uint8_t comm_error)
+{
+    if (sensor == 0) {
+        return;
+    }
+
+    sensor->rx_word = 0U;
+
+    if (comm_error != 0U) {
+        sensor->comm_error_count++;
+    } else {
+        sensor->reject_count++;
+    }
+
+    if (sensor->consecutive_bad_count < UINT8_MAX) {
+        sensor->consecutive_bad_count++;
+    }
+
+    if (sensor->consecutive_bad_count >= MA600A_MAX_CONSECUTIVE_BAD_SAMPLES) {
+        sensor->data_valid = 0U;
+    }
+}
+
+/* 函数作用：复位一次 MA600A 读数状态。
+ * 输入：sensor 为已初始化的编码器对象。输出：无返回值。调用频率：SPI 读角失败或初始化清零时调用。运行内容：清除接收缓存并撤销当前角度数据有效标志。 */
+static void ma600a_reset_state(ma600a_t *sensor)
+{
+    sensor->rx_word = 0U;
+    sensor->data_valid = 0U;
+    sensor->transfer_busy = 0U;
+    sensor->consecutive_bad_count = 0U;
+}
+
+/* 函数作用：初始化 MA600A 设备对象并绑定底层 SPI 与片选引脚。
+ * 输入：sensor 为设备对象指针，hspi 为已完成 CubeMX 初始化的 SPI 句柄，
+ *      cs_port/cs_pin 为编码器片选引脚。
+ * 输出：无返回值。
+ * 运行频率：系统上电初始化时调用 1 次。
+ * 运行内容：保存驱动依赖、清零角度缓存，并把片选脚拉高到空闲状态。
+ */
+void ma600a_init(ma600a_t *sensor, SPI_HandleTypeDef *hspi, GPIO_TypeDef *cs_port, uint16_t cs_pin)
+{
+    if ((sensor == 0) || (hspi == 0) || (cs_port == 0)) {
+        return;
+    }
+
+    sensor->hspi = hspi;
+    sensor->cs_port = cs_port;
+    sensor->cs_pin = cs_pin;
+    sensor->tx_word = 0U;
+    sensor->rx_word = 0U;
+    sensor->angle_raw = 0U;
+    sensor->angle_deg = 0.0f;
+    sensor->angle_rad = 0.0f;
+    sensor->transfer_busy = 0U;
+    sensor->consecutive_bad_count = 0U;
+    sensor->sample_counter = 0U;
+    sensor->reject_count = 0U;
+    sensor->comm_error_count = 0U;
+    ma600a_reset_state(sensor);
+
+    ma600a_cs_high(sensor);
+}
+
+/* 函数作用：读取 MA600A 当前机械绝对角度。
+ * 输入：sensor 为已完成初始化的 MA600A 设备对象。
+ * 输出：返回 1 表示本次 SPI 读取成功，返回 0 表示读取失败。
+ * 运行频率：当前建议放在后台慢任务中约 1 kHz 调用，后续也可迁移到控制节拍里。
+ * 运行内容：在当前 CubeMX 配置的 16bit SPI 帧下发送 1 个空命令字，
+ *      读取返回的 16bit 角度码，并同步换算成角度制与弧度制。
+ */
+uint8_t ma600a_read_angle(ma600a_t *sensor)
+{
+    HAL_StatusTypeDef status;
+
+    if ((sensor == 0) || (sensor->hspi == 0) || (sensor->cs_port == 0)) {
+        return 0U;
+    }
+
+    if (sensor->transfer_busy != 0U) {
+        return 0U;
+    }
+
+    sensor->tx_word = MA600A_ANGLE_CMD;
+    sensor->rx_word = 0U;
+
+    ma600a_cs_low(sensor);
+    status = HAL_SPI_TransmitReceive_IT(sensor->hspi,
+                                        (uint8_t *)&sensor->tx_word,
+                                        (uint8_t *)&sensor->rx_word,
+                                        1U);
+
+    if (status != HAL_OK) {
+        ma600a_cs_high(sensor);
+        if (status != HAL_BUSY) {
+            ma600a_note_bad_sample(sensor, 1U);
+        }
+        return 0U;
+    }
+
+    sensor->transfer_busy = 1U;
+    return 1U;
+}
+
+void ma600a_spi_txrx_cplt_callback(ma600a_t *sensor, SPI_HandleTypeDef *hspi)
+{
+    if ((sensor == 0) || (hspi == 0) || (sensor->hspi != hspi)) {
+        return;
+    }
+
+    ma600a_cs_high(sensor);
+    sensor->transfer_busy = 0U;
+
+    if (ma600a_sample_is_plausible(sensor, sensor->rx_word) == 0U) {
+        ma600a_note_bad_sample(sensor, 0U);
+        return;
+    }
+
+    ma600a_update_angle_cache(sensor, sensor->rx_word);
+}
+
+void ma600a_spi_error_callback(ma600a_t *sensor, SPI_HandleTypeDef *hspi)
+{
+    if ((sensor == 0) || (hspi == 0) || (sensor->hspi != hspi)) {
+        return;
+    }
+
+    ma600a_cs_high(sensor);
+    sensor->transfer_busy = 0U;
+    ma600a_note_bad_sample(sensor, 1U);
 }
