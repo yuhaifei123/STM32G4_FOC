@@ -27,14 +27,6 @@ float program_convert_vbus_from_raw(uint16_t raw);
 /* ── 控制环 ── */
 
 /**
- * @brief  快环主控制入口（10kHz）
- *
- * 统一处理故障检测、使能、编码器对齐、速度环、电流环和 PWM 下发。
- * 调用时机：每次 ADC 注入组完成后调用。
- */
-void program_run_speed_current_control(void);
-
-/**
  * @brief  执行速度环并更新 iq 或 uq 命令
  *
  * 先按分频条件运行位置环，再由速度 PI 生成电流/电压模式输出。

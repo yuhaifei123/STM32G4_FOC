@@ -229,18 +229,25 @@ void program_reset_encoder_observer(void)
 /* 函数作用：对连续机械角做周期性重归一化。 */
 static void program_renormalize_encoder_observer(void)
 {
-    float anchor_turns, anchor_rad;
+    /** 锚定圈数（整数圈） */
+    float anchor_turns;
+    /** 锚定弧度 = 圈数 × 2π */
+    float anchor_rad;
+    /** 连续角或窗口起点出现 NaN/Inf → 复位观测器 */
     if ((!isfinite(g_encoder_continuous_mech_rad)) ||
         (!isfinite(g_encoder_speed_window_start_mech_rad)) ||
         (!isfinite(g_encoder_speed_raw_mech_rad_s))) {
         program_reset_encoder_observer();
         return;
     }
+    /** 连续角和窗口起点均 < 32 圈 → 无需重归一化 */
     if ((fabsf(g_encoder_continuous_mech_rad) < (32.0f * MOTOR_TWO_PI)) &&
         (fabsf(g_encoder_speed_window_start_mech_rad) < (32.0f * MOTOR_TWO_PI)))
         return;
+    /** 取整数圈数作为锚点 */
     anchor_turns = floorf(g_encoder_continuous_mech_rad / MOTOR_TWO_PI);
     anchor_rad = anchor_turns * MOTOR_TWO_PI;
+    /** 连续角和窗口起点同时减去整数圈，保持差值不变 */
     g_encoder_continuous_mech_rad -= anchor_rad;
     g_encoder_speed_window_start_mech_rad -= anchor_rad;
 }

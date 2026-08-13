@@ -152,9 +152,24 @@ void program_adc_conv_cplt_callback(ADC_HandleTypeDef *hadc);
 void program_adc_injected_conv_cplt_callback(ADC_HandleTypeDef *hadc);
 
 /* ── 系统层导出（供 program_current.c / program_svpwm.c 调用）── */
+/**
+ * 控制驱动芯片休眠/唤醒
+ * @param enable  0=休眠（N_SLEEP 拉低），1=唤醒使能功率级
+ */
 void     program_set_power_stage_enable(uint8_t enable);
+/**
+ * 读取驱动芯片 nFAULT 引脚状态
+ * @return 1=故障有效（引脚低电平），0=正常
+ */
 uint8_t  program_is_driver_fault_active(void);
+/**
+ * 查询 debug PWM 测试模式是否激活
+ * @return 1=激活，0=关闭
+ */
 uint8_t  program_debug_pwm_test_is_enabled(void);
+/**
+ * 用 debug PWM 固定占空比直接驱动三相输出（绕过 FOC 控制）
+ */
 void     program_apply_debug_pwm_test_output(void);
 void     program_apply_svpwm_to_tim1(const foc_svpwm_duty_t *duty);
 void     program_update_debug_telemetry(void);
