@@ -1281,21 +1281,6 @@
           </Files>
         </Group>
         <Group>
-          <GroupName>Common</GroupName>
-          <Files>
-            <File>
-              <FileName>Common_Utils.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\common\Common_Utils.c</FilePath>
-            </File>
-            <File>
-              <FileName>Common_Utils.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\Core\common\Common_Utils.h</FilePath>
-            </File>
-          </Files>
-        </Group>
-        <Group>
           <GroupName>App</GroupName>
           <Files>
             <File>
@@ -1349,11 +1334,6 @@
               <FilePath>..\Core\App\ma600a.h</FilePath>
             </File>
             <File>
-              <FileName>motor_params.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\App\motor_params.c</FilePath>
-            </File>
-            <File>
               <FileName>motor_params.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Core\App\motor_params.h</FilePath>
@@ -1397,16 +1377,6 @@
               <FileName>program_svpwm.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Core\App\program_svpwm.h</FilePath>
-            </File>
-            <File>
-              <FileName>program_utils.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\App\program_utils.c</FilePath>
-            </File>
-            <File>
-              <FileName>program_utils.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\Core\App\program_utils.h</FilePath>
             </File>
           </Files>
         </Group>

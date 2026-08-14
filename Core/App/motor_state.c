@@ -10,24 +10,8 @@
 #include "program_current.h"
 #include "program_svpwm.h"
 
-/* ── 对齐宏定义 ── */
-/** 对齐保持拍数（8000 × 100μs = 800ms） */
-#define MOTOR_ALIGN_HOLD_TICKS      8000U
-/** 对齐 Ud 电压 (V) */
-#define MOTOR_ALIGN_UD_V              1.8f
-/** 开环拖动电角速度 (rad/s) */
-#define MOTOR_OPEN_LOOP_SPEED_ELEC  2000.0f
-/** 开环拖动 q 轴电压 (V) */
-#define MOTOR_OPEN_LOOP_UQ_V          1.0f
-
-/* ── 来自 program.c 的编码器/控制变量（extern） ── */
-extern uint8_t  g_encoder_align_done;
-extern uint32_t g_encoder_align_counter;
-extern float    g_encoder_elec_offset_rad;
-extern uint8_t  g_encoder_speed_ready;
-extern uint8_t  g_speed_loop_update_pending;
-extern float    g_speed_loop_dt_s;
-extern uint8_t  g_power_stage_enabled;
+/* 对齐/开环参数宏统一在 program_config.h 中定义 */
+/* 跨文件业务状态（g_encoder/g_control）extern 声明见 program.h */
 
 /* 函数作用：执行一次状态切换并记录进入时间。
  * 输入：motor 为状态机对象，next_state 为目标状态，now_ms 为当前毫秒时间。
@@ -62,8 +46,8 @@ void motor_state_init(motor_state_t *motor)
     motor->fault_code = MOTOR_FAULT_NONE;
     motor->state_enter_ms = 0U;
     motor->theta_open_loop = 0.0f;
-    motor->open_loop_speed_elec = MOTOR_OPEN_LOOP_SPEED_ELEC;
-    motor->control_angle_open_loop_speed_elec = MOTOR_OPEN_LOOP_SPEED_ELEC;
+    motor->open_loop_speed_elec = PROGRAM_OPEN_LOOP_DEFAULT_SPEED_ELEC;
+    motor->control_angle_open_loop_speed_elec = PROGRAM_OPEN_LOOP_DEFAULT_SPEED_ELEC;
     motor->id_ref = 0.0f;
     motor->iq_ref = 0.0f;
     motor->ud_ref = 0.0f;
@@ -184,9 +168,9 @@ void motor_state_task(motor_state_t *motor, foc_core_t *foc, uint32_t now_ms)
         if (motor->run_request != 0U) {
             /** 收到启动命令 → 复位对齐状态 → 进入 ALIGN */
             motor->align_done = 0U;
-            g_encoder_align_counter = 0U;
-            g_encoder_align_done  = 0U;
-            g_encoder_elec_offset_rad = 0.0f;
+            g_encoder.align_counter = 0U;
+            g_encoder.align_done  = 0U;
+            g_encoder.elec_offset_rad = 0.0f;
             program_reset_speed_loop();
             program_reset_position_loop();
             program_reset_current_loop();
@@ -201,23 +185,23 @@ void motor_state_task(motor_state_t *motor, foc_core_t *foc, uint32_t now_ms)
         motor->id_ref    = 0.0f;
         motor->iq_ref    = 0.0f;
         motor->theta_open_loop = 0.0f;        /** 电角度 = 0（d 轴固定） */
-        motor->ud_ref    = MOTOR_ALIGN_UD_V;   /** 1.8V 直流电压 */
+        motor->ud_ref    = PROGRAM_ALIGN_UD_V;   /** 1.8V 直流电压 */
         motor->uq_ref    = 0.0f;
         /** 计算 SVPWM 占空比 → 下发 TIM1 → 使能功率级 */
         foc_core_run_voltage_open_loop(foc, motor->ud_ref, motor->uq_ref,
                                        motor->theta_open_loop, g_program_telemetry.vbus);
         program_apply_svpwm_to_tim1(&foc->duty);
         program_set_power_stage_enable(1U);
-        g_encoder_align_counter++;
+        g_encoder.align_counter++;
         /** 在最后 512 拍的窗口内累加 sin/cos */
         program_capture_encoder_alignment_sample();
 
-        if (g_encoder_align_counter >= MOTOR_ALIGN_HOLD_TICKS) {
+        if (g_encoder.align_counter >= PROGRAM_ALIGN_HOLD_TICKS) {
             /** 800ms 到 → atan2(sin_sum, cos_sum) 求平均电角 → 写入偏置 */
             raw_theta_elec = program_get_encoder_alignment_angle_rad();
-            g_encoder_elec_offset_rad = motor_params_wrap_angle_rad(
+            g_encoder.elec_offset_rad = motor_params_wrap_angle_rad(
                 raw_theta_elec - motor->theta_open_loop);
-            g_encoder_align_done = 1U;
+            g_encoder.align_done = 1U;
             motor->align_done   = 1U;
             /** 对齐完成 → 复位观测器 → 切闭环 */
             program_reset_encoder_align_runtime();
@@ -247,7 +231,7 @@ void motor_state_task(motor_state_t *motor, foc_core_t *foc, uint32_t now_ms)
         }
 
         /** 速度观测未就绪 → 电压模式等待（仅电流环或直接电压输出） */
-        if ((motor->speed_loop_enable != 0U) && (g_encoder_speed_ready == 0U)) {
+        if ((motor->speed_loop_enable != 0U) && (g_encoder.speed_ready == 0U)) {
             theta_cmd = program_get_control_elec_angle_rad();
             motor->theta_open_loop = theta_cmd;
             program_reset_speed_loop();
@@ -276,8 +260,8 @@ void motor_state_task(motor_state_t *motor, foc_core_t *foc, uint32_t now_ms)
             motor->speed_integral_iq = 0.0f;
             motor->speed_integral_uq = 0.0f;
             program_reset_position_loop();
-            g_speed_loop_update_pending = 0U;
-            g_speed_loop_dt_s = PROGRAM_FAST_LOOP_DT_S * 20.0f;
+            g_encoder.speed_loop_update_pending = 0U;
+            g_control.speed_loop_dt_s = PROGRAM_FAST_LOOP_DT_S * 20.0f;
             program_reset_speed_reference_ramp();
         }
         /** 获取控制电角度（编码器 + 偏置，或开环积分器） */

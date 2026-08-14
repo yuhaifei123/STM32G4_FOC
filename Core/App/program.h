@@ -8,66 +8,9 @@
 #include "motor_state.h"
 #include "foc_core.h"
 #include "motor_params.h"
-
-/* ── 系统级宏定义（program.c / program_current.c / program_svpwm.c 共用）── */
-/** 圆周率 π */
-#define PROGRAM_PI                            3.14159265359f
-/** 快环频率 (Hz) = 10kHz */
-#define PROGRAM_FAST_LOOP_HZ                  10000.0f
-/** 快环周期 (s) = 100μs */
-#define PROGRAM_FAST_LOOP_DT_S                (1.0f / PROGRAM_FAST_LOOP_HZ)
-/** 快环周期 (μs) = 100μs，DWT 超时判定用 */
-#define PROGRAM_FAST_LOOP_PERIOD_US           (1000000.0f / PROGRAM_FAST_LOOP_HZ)
-/** 速度参考斜坡速率 (rad/s?)，防止速度指令突变 */
-#define PROGRAM_SPEED_REF_RAMP_RAD_S2         100.0f
-/** 电流参考斜坡速率 (A/s)，防止电流指令突变造成转矩冲击 */
-#define PROGRAM_CURRENT_REF_RAMP_A_PER_S      150.0f
-
-/* ── ADC 硬件参数 ── */
-/** ADC 参考电压 (V) */
-#define PROGRAM_ADC_REF_V                     3.3f
-/** ADC 满量程码值 (12bit) */
-#define PROGRAM_ADC_FULL_SCALE_COUNTS         4095.0f
-/** 采样电阻阻值 (Ω)，串在电机相线上 */
-#define PROGRAM_SHUNT_RESISTOR_OHM            0.01f
-/** INA240 电流检测放大器固定增益 (V/V) */
-#define PROGRAM_CURRENT_SENSE_GAIN            20.0f
-/** 母线分压电阻上臂 (Ω) */
-#define PROGRAM_VBUS_R_UP_OHM                 240000.0f
-/** 母线分压电阻下臂 (Ω) */
-#define PROGRAM_VBUS_R_DOWN_OHM               10000.0f
-
-/* ── 位置环 hold/creep 阈值 ── */
-/** 位置 hold：进入保持的误差阈值 (rad) ≈ 1.2° */
-#define PROGRAM_POSITION_HOLD_ERR_RAD         0.021f
-/** 位置 hold：退出保持的误差阈值 (rad) ≈ 1.8°（滞回） */
-#define PROGRAM_POSITION_HOLD_RELEASE_ERR_RAD 0.031f
-/** 位置 hold：保持时允许的最大输出速度 (rad/s) */
-#define PROGRAM_POSITION_HOLD_SPEED_MECH_RAD_S 0.50f
-/** 位置 hold：连续超阈值周期数才释放（防抖） */
-#define PROGRAM_POSITION_HOLD_RELEASE_CONFIRM_CYCLES 12U
-/** 位置 creep：启动蠕动的误差阈值 (rad) ≈ 2.6° */
-#define PROGRAM_POSITION_CREEP_ENABLE_ERR_RAD 0.045f
-/** 位置 creep：蠕动补偿速度 (rad/s)，克服摩擦死区 */
-#define PROGRAM_POSITION_CREEP_SPEED_MECH_RAD_S 0.020f
-
-/* ── 电流符号（硬件接线方向校正） ── */
-/** A 相电流符号（±1，硬件接线方向校正） */
-#define PROGRAM_CURRENT_SIGN_IA               (1.0f)
-/** B 相电流符号 */
-#define PROGRAM_CURRENT_SIGN_IB               (1.0f)
-/** C 相电流符号 */
-#define PROGRAM_CURRENT_SIGN_IC               (1.0f)
-
-/* ── 编码器观测与量化保护 ── */
-/** 连续角重归一化阈值 (rad) = 32 圈，防止浮点精度丢失 */
-#define PROGRAM_ENCODER_OBSERVER_RENORM_RAD   (32.0f * MOTOR_TWO_PI)
-/** 编码器 1 LSB 对应的机械角分辨率 (rad) */
-#define PROGRAM_ENCODER_LSB_RAD               (MOTOR_TWO_PI / 65536.0f)
-/** 速度零位保持：量化噪声倍数阈值 */
-#define PROGRAM_SPEED_MEAS_ZERO_HOLD_SCALE    8.0f
-/** 速度零位保持：最小机械转速死区 (rad/s)，低于此值强制归零 */
-#define PROGRAM_SPEED_MEAS_ZERO_HOLD_MIN_MECH_RAD_S 0.35f
+#include "program_config.h"
+#include "filter.h"
+#include "ma600a.h"
 
 /*
  * 程序层遥测结构体：集中存放所有调试和监控变量。
@@ -182,13 +125,13 @@ typedef struct
     float fast_loop_period_us;              /* 快环周期 (μs，应为100) */
 } program_telemetry_t;
 
-/** 调试 PWM 测试参数 */
+/** 调试 PWM 测试参数（调试器中设 enable=1 直接输出固定占空比） */
 typedef struct
 {
-    uint8_t enable;
-    float   duty_a;
-    float   duty_b;
-    float   duty_c;
+    uint8_t enable;   /** 1=启用调试 PWM，绕过全部 FOC 控制逻辑 */
+    float   duty_a;   /** A 相固定占空比 (0~1) */
+    float   duty_b;   /** B 相固定占空比 (0~1) */
+    float   duty_c;   /** C 相固定占空比 (0~1) */
 } program_debug_pwm_test_t;
 
 /* ── 全局对象 extern 声明 ── */
@@ -196,12 +139,77 @@ extern volatile program_telemetry_t      g_program_telemetry;
 extern volatile program_debug_pwm_test_t g_program_debug_pwm_test;
 extern motor_state_t g_motor;
 extern foc_core_t    g_foc;
+extern ma600a_t      g_ma600a;
+
+/* ── 业务状态结构体 ── */
+
+/**
+ * @brief 编码器跨文件接口状态（定义于 program.c）
+ * 使用方: program_svpwm.c(测速/对齐) program_current.c(速度环) motor_state.c(对齐状态机) program.c(遥测)
+ */
+typedef struct
+{
+    uint8_t  speed_primed;               /* 速度观测器已初始化（首次角度已记录） */
+    uint8_t  speed_ready;                /* 速度测量就绪（满一个窗口后置位） */
+    uint8_t  speed_loop_update_pending;  /* 速度环更新挂起标志（svpwm 置位, current 消费） */
+    float    speed_raw_mech_rad_s;       /* 未滤波机械角速度 (rad/s)，窗口差分原始值 */
+    uint8_t  align_done;                 /* 零位对齐完成标志 */
+    uint32_t align_counter;              /* 对齐计时器（每 100μs 加 1） */
+    float    elec_offset_rad;            /* 电角偏置 (rad)：θe = 编码器电角 - offset */
+} program_encoder_t;
+
+/**
+ * @brief 控制环运行时状态（定义于 program.c）
+ * 使用方: program_current.c(三环控制) program_svpwm.c(滤波/观测) program.c(功率级/性能统计)
+ */
+typedef struct
+{
+    uint8_t  power_stage_enabled;                 /* 功率级使能状态：1=唤醒, 0=休眠 */
+    float    id_ref_applied_a;                    /* 电流斜坡：实际生效的 id 给定 (A) */
+    float    iq_ref_applied_a;                    /* 电流斜坡：实际生效的 iq 给定 (A) */
+    filter_lpf_f32_t speed_meas_lpf;              /* 速度测量一阶低通滤波器 */
+    filter_lpf_f32_t position_meas_lpf;           /* 位置测量一阶低通滤波器 */
+    float    speed_loop_dt_s;                     /* 速度环当前控制周期 (s) */
+    float    position_loop_elapsed_s;             /* 位置环累计时间 (s)，用于 200Hz 分频 */
+    float    position_meas_output_continuous_rad; /* 位置测量：输出轴连续机械角 (rad) */
+    uint8_t  position_loop_enable_prev;           /* 位置环上一拍使能状态（模式切换检测） */
+    uint8_t  current_loop_enable_prev;            /* 电流环上一拍使能状态（模式切换检测） */
+    uint8_t  position_hold_active;                /* 位置 hold 激活标志 */
+    uint8_t  position_hold_release_counter;       /* 位置 hold 释放确认计数器 */
+} program_control_t;
+
+extern program_encoder_t g_encoder;   /* 编码器跨文件接口状态实例 */
+extern program_control_t g_control;   /* 控制环运行时状态实例 */
 
 /* ── 公共接口 ── */
+/**
+ * 程序层初始化入口
+ * @note 系统启动后只调用一次；保持驱动休眠→ADC校准→初始化对象→启动采样链→使能UART
+ */
 void program_init(void);
+/**
+ * 程序层后台任务入口（慢环 1kHz）
+ * @note 在 while(1) 中持续调用，内部按 TIM6 1ms 节拍执行；
+ *       UART 命令解析→ADC 工程量换算→故障检测→VOFA 波形发送
+ */
 void program_task(void);
+/**
+ * 定时器周期回调转发入口
+ * @param htim  触发中断的定时器句柄（当前主要是 TIM6 1kHz）
+ * @note 识别 TIM6 后递增慢任务时基 g_sys.tim6_tick_ms
+ */
 void program_tim_period_elapsed_callback(TIM_HandleTypeDef *htim);
+/**
+ * regular ADC 完成回调转发入口
+ * @param hadc  完成转换的 ADC 句柄
+ * @note 当前 ADC2 走 DMA 环形缓冲，此处保留空接口
+ */
 void program_adc_conv_cplt_callback(ADC_HandleTypeDef *hadc);
+/**
+ * injected ADC 完成回调转发入口（快环 10kHz 入口）
+ * @param hadc  完成注入组转换的 ADC 句柄（应为 ADC1）
+ * @note 读取三相电流→零偏校准→编码器读取→电流反馈→状态机控制→耗时统计
+ */
 void program_adc_injected_conv_cplt_callback(ADC_HandleTypeDef *hadc);
 
 /* ── 系统层导出（供 program_current.c / program_svpwm.c 调用）── */
@@ -224,29 +232,56 @@ uint8_t  program_debug_pwm_test_is_enabled(void);
  * 用 debug PWM 固定占空比直接驱动三相输出（绕过 FOC 控制）
  */
 void     program_apply_debug_pwm_test_output(void);
+/**
+ * 将 SVPWM 三相占空比写入 TIM1 CCR 寄存器
+ * @param duty  三相占空比结构体指针（0~1，NULL 安全）
+ * @note 占空比→计数值→钳位保护→写入 CH1~CH3 比较寄存器
+ */
 void     program_apply_svpwm_to_tim1(const foc_svpwm_duty_t *duty);
+/**
+ * 更新程序层遥测对象到最新状态
+ * @note 将电机状态、ADC、编码器、速度/位置/电流等关键变量同步写入 g_program_telemetry
+ */
 void     program_update_debug_telemetry(void);
 
 /* ── 快环控制函数（供 motor_state_task 调用） ── */
+/** 复位速度环：清空积分项与挂起标志，恢复默认速度环周期 */
 void     program_reset_speed_loop(void);
+/** 复位位置环：清空积分、Hold 状态和累计时间，重置位置测量 LPF */
 void     program_reset_position_loop(void);
+/** 复位电流环：清零 id/iq 给定/反馈、电压命令和积分项 */
 void     program_reset_current_loop(void);
+/** 复位速度参考斜坡：机械/电角速度给定及开环速度同步归零 */
 void     program_reset_speed_reference_ramp(void);
+/** 复位编码器测速观测器：清空连续角、测速窗口和滤波器 */
 void     program_reset_encoder_observer(void);
+/** 复位编码器零位对齐结果：清空零位偏置和对齐完成标志 */
 void     program_reset_encoder_alignment(void);
+/** 复位编码器对齐运行时累积量：清空计数器与 sin/cos 累积和 */
 void     program_reset_encoder_align_runtime(void);
+/** 在对齐保持阶段采集电角度样本（最后 512 拍窗口内累积 sin/cos） */
 void     program_capture_encoder_alignment_sample(void);
+/** 计算对齐得到的平均电角度（atan2 抗噪声） */
 float    program_get_encoder_alignment_angle_rad(void);
+/** 获取当前控制电角度：开环模式用积分器角，否则用编码器对齐角 */
 float    program_get_control_elec_angle_rad(void);
+/** 执行电流环：id/iq PI → 电压限幅 → 反Park+SVPWM */
 void     program_run_current_loop(float theta_cmd);
+/** 执行电压模式：仅限幅后直接反Park+SVPWM 输出 ud/uq */
 void     program_run_voltage_mode(float theta_cmd);
+/** 执行速度环：位置环分频调度 → 斜坡 → 速度 PI → iq/uq */
 void     program_update_speed_loop(void);
+/** 检测位置环使能边沿并处理模式切换（初始化目标位置） */
 void     program_handle_position_loop_mode_switch(void);
+/** 检测电流环使能边沿并处理模式切换（复位相关控制环） */
 void     program_handle_current_loop_mode_switch(void);
 
 /* ── 获取器 ── */
+/** 获取当前程序层遥测对象（只读，调试器 Watch 窗口用） */
 const volatile program_telemetry_t *program_get_telemetry(void);
+/** 获取当前电机状态机对象（调试器直接读写控制参数用） */
 motor_state_t *program_get_motor(void);
+/** 获取当前 FOC 核心对象 */
 foc_core_t     *program_get_foc(void);
 
 #endif /* PROGRAM_H */

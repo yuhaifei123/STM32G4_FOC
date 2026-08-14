@@ -46,6 +46,14 @@ static void ma600a_update_angle_cache(ma600a_t *sensor, uint16_t angle_raw)
     sensor->sample_counter++;
 }
 
+/**
+ * @brief  计算两次角度码之间的最短差值（处理 0/65536 跨零跳变）
+ * @param  current_angle_raw   当前 16bit 原始角度码
+ * @param  previous_angle_raw  上一次 16bit 原始角度码
+ * @return 最短角度差 (counts)，范围 ±32768
+ * @note   运行频率: 样本合理性检查时调用
+ *          运行内容: 差值超过半圈 → 反向折算，消除编码器跨零跳变
+ */
 static int32_t ma600a_delta_counts(uint16_t current_angle_raw, uint16_t previous_angle_raw)
 {
     int32_t delta_counts;
@@ -61,6 +69,14 @@ static int32_t ma600a_delta_counts(uint16_t current_angle_raw, uint16_t previous
     return delta_counts;
 }
 
+/**
+ * @brief  判断新角度样本是否合理（跳变检测）
+ * @param  sensor     设备对象
+ * @param  angle_raw  新读到的 16bit 原始角度码
+ * @return 1=合理，0=跳变过大需丢弃
+ * @note   运行频率: 每次 SPI 读角完成后调用
+ *          运行内容: 首次样本/设备无效时直接通过；否则检查与上一拍的跳变是否超过阈值
+ */
 static uint8_t ma600a_sample_is_plausible(const ma600a_t *sensor, uint16_t angle_raw)
 {
     int32_t delta_counts;
@@ -77,6 +93,13 @@ static uint8_t ma600a_sample_is_plausible(const ma600a_t *sensor, uint16_t angle
     return 1U;
 }
 
+/**
+ * @brief  记录一次坏样本（通信错误或跳变拒绝）
+ * @param  sensor      设备对象
+ * @param  comm_error  1=SPI 通信错误，0=跳变过大被拒绝
+ * @note   运行频率: 读角失败或样本不合理时调用
+ *          运行内容: 清零接收缓存 → 累加对应错误计数 → 连续坏样本≥4 时撤销数据有效标志
+ */
 static void ma600a_note_bad_sample(ma600a_t *sensor, uint8_t comm_error)
 {
     if (sensor == 0) {
@@ -181,6 +204,13 @@ uint8_t ma600a_read_angle(ma600a_t *sensor)
     return 1U;
 }
 
+/**
+ * @brief  SPI 收发完成回调：校验样本并更新角度缓存
+ * @param  sensor  设备对象
+ * @param  hspi    完成传输的 SPI 句柄（需与设备绑定句柄一致）
+ * @note   运行频率: 每次 SPI 中断传输完成后由 HAL 回调链触发
+ *          运行内容: 拉高片选 → 清忙标志 → 样本合理性检查 → 通过则更新角度/度/弧度缓存
+ */
 void ma600a_spi_txrx_cplt_callback(ma600a_t *sensor, SPI_HandleTypeDef *hspi)
 {
     if ((sensor == 0) || (hspi == 0) || (sensor->hspi != hspi)) {
@@ -198,6 +228,13 @@ void ma600a_spi_txrx_cplt_callback(ma600a_t *sensor, SPI_HandleTypeDef *hspi)
     ma600a_update_angle_cache(sensor, sensor->rx_word);
 }
 
+/**
+ * @brief  SPI 错误回调：撤销传输并记录通信错误
+ * @param  sensor  设备对象
+ * @param  hspi    报错的 SPI 句柄（需与设备绑定句柄一致）
+ * @note   运行频率: SPI 传输出错时由 HAL 回调链触发
+ *          运行内容: 拉高片选 → 清忙标志 → 按通信错误记录坏样本
+ */
 void ma600a_spi_error_callback(ma600a_t *sensor, SPI_HandleTypeDef *hspi)
 {
     if ((sensor == 0) || (hspi == 0) || (sensor->hspi != hspi)) {

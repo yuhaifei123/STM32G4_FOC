@@ -58,7 +58,6 @@ void  program_capture_encoder_alignment_sample(void);
 float program_get_encoder_alignment_angle_rad(void);
 
 /* ── 编码器角度获取 ── */
-
 /**
  * @brief  读取编码器对应的转子机械角
  * @return 转子机械角 (rad)，已考虑编码器方向符号

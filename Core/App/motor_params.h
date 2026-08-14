@@ -3,6 +3,7 @@
 
 #include <math.h>
 
+/* ── 电机本体参数（硬件属性，与控制程序配置分离管理） ── */
 /** 电机极对数 */
 #define MOTOR_POLE_PAIRS         14.0f
 /** 减速比 */
