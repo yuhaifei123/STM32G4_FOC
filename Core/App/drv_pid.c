@@ -112,56 +112,51 @@ void drv_pid_pi_reset(drv_pid_pi_t *pid, int32_t out_init)
 }
 
 /**
- * @brief  执行一次 PI 更新
+ * @brief  执行一步 PI 运算
  * @param  pid       控制器对象
- * @param  ref       参考值
- * @param  feedback  反馈值（与 ref 量纲必须一致）
- * @return 本次 PI 输出，同时内部状态会回写到 pid 结构体
- * @note   运行频率: 由上层控制环按固定节拍调用
- *          运行内容: 计算误差、比例项和积分项，做抗饱和处理后输出控制量
+ * @param  ref       本次参考值（目标值）
+ * @param  feedback  本次反馈值（实际测量值）
+ * @return 限幅后的控制器输出
+ * @note   运行频率: 每个控制周期调用一次（如 10kHz 电流环）
+ *          运行内容: 计算误差 → 比例项 → 积分候选（限幅）→ 总输出
+ *          带抗饱和处理：输出越限时只在不加深饱和的方向更新积分
  */
 int32_t drv_pid_pi_step(drv_pid_pi_t *pid, int32_t ref, int32_t feedback)
 {
-    int32_t p_term_q15;
-    int32_t i_candidate_q15;
-    int32_t out_q15;
-    int32_t out_s32;
-    int32_t i_min_q15;
-    int32_t i_max_q15;
+    int32_t p_term_q15, i_candidate_q15, out_q15, out_s32;
 
     if (pid == 0) {
         return 0;
     }
 
+    /** 记录本次输入并计算误差 */
     pid->ref = ref;
     pid->feedback = feedback;
     pid->error = ref - feedback;
 
+    /** 比例项 = error × kp（Q15 域） */
     p_term_q15 = pid->error * pid->kp_q15;
+    /** 积分候选 = 上次积分 + error × ki（Q15 域，先限幅） */
     i_candidate_q15 = pid->i_term_q15 + (pid->error * pid->ki_q15);
+    i_candidate_q15 = drv_pid_clamp_s32(i_candidate_q15,
+        drv_pid_s32_to_q15(pid->out_min), drv_pid_s32_to_q15(pid->out_max));
 
-    /* 积分项先限在输出物理范围内，防止长时间误差把内部状态冲到不可恢复。 */
-    i_min_q15 = drv_pid_s32_to_q15(pid->out_min);
-    i_max_q15 = drv_pid_s32_to_q15(pid->out_max);
-    i_candidate_q15 = drv_pid_clamp_s32(i_candidate_q15, i_min_q15, i_max_q15);
-
+    /** 总输出 = P + I，四舍五入还原 */
     out_q15 = p_term_q15 + i_candidate_q15;
     out_s32 = drv_pid_q15_to_s32_round(out_q15);
 
+    /** 抗饱和：输出越限时只在不加深饱和的方向更新积分 */
     if (out_s32 > pid->out_max) {
         out_s32 = pid->out_max;
-        if (pid->error < 0) {
-            pid->i_term_q15 = i_candidate_q15;
-        }
+        if (pid->error < 0) pid->i_term_q15 = i_candidate_q15;
     } else if (out_s32 < pid->out_min) {
         out_s32 = pid->out_min;
-        if (pid->error > 0) {
-            pid->i_term_q15 = i_candidate_q15;
-        }
+        if (pid->error > 0) pid->i_term_q15 = i_candidate_q15;
     } else {
         pid->i_term_q15 = i_candidate_q15;
     }
 
+    /** 回写诊断字段 */
     pid->p_out = drv_pid_q15_to_s32_round(p_term_q15);
     pid->i_out = drv_pid_q15_to_s32_round(pid->i_term_q15);
     pid->output = out_s32;

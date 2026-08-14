@@ -12,20 +12,6 @@
 #include "program_svpwm.h"
 
 /* ── 全局宏定义 ── */
-/* ── ADC 硬件参数 ── */
-/** ADC 参考电压 (V) */
-#define PROGRAM_ADC_REF_V                     3.3f
-/** ADC 满量程码值 (12bit) */
-#define PROGRAM_ADC_FULL_SCALE_COUNTS         4095.0f
-/** 采样电阻阻值 (Ω)，串在电机相线上 */
-#define PROGRAM_SHUNT_RESISTOR_OHM            0.01f
-/** INA240 电流检测放大器固定增益 (V/V) */
-#define PROGRAM_CURRENT_SENSE_GAIN            20.0f
-/** 母线分压电阻上臂 (Ω) */
-#define PROGRAM_VBUS_R_UP_OHM                 240000.0f
-/** 母线分压电阻下臂 (Ω) */
-#define PROGRAM_VBUS_R_DOWN_OHM               10000.0f
-
 /* ── 零偏校准 ── */
 /** 默认零偏码值（12bit ADC 中点，对应 INA240 Vref/2 = 1.65V） */
 #define PROGRAM_DEFAULT_CURRENT_OFFSET_RAW    2048U
@@ -35,16 +21,6 @@
 /* ── 系统默认值 ── */
 /** 默认母线电压 (V)，校准前使用 */
 #define PROGRAM_DEFAULT_VBUS_V                48.0f
-/** 圆周率 π */
-#define PROGRAM_PI                            3.14159265359f
-
-/* ── 快环时序（10kHz） ── */
-/** 快环频率 (Hz) */
-#define PROGRAM_FAST_LOOP_HZ                  10000.0f
-/** 快环周期 (s) = 100μs */
-#define PROGRAM_FAST_LOOP_DT_S                (1.0f / PROGRAM_FAST_LOOP_HZ)
-/** 快环周期 (μs) = 100μs */
-#define PROGRAM_FAST_LOOP_PERIOD_US           (1000000.0f / PROGRAM_FAST_LOOP_HZ)
 
 /* ── 位置环时序（200Hz） ── */
 /** 位置环频率 (Hz) */
@@ -59,12 +35,6 @@
 #define PROGRAM_DEFAULT_SPEED_MEAS_LPF_CUTOFF_HZ 150.0f
 /** 速度环控制周期 (s) = 快环周期 × 窗口拍数 */
 #define PROGRAM_SPEED_LOOP_DT_S               (PROGRAM_FAST_LOOP_DT_S * (float)PROGRAM_SPEED_OBSERVER_WINDOW_SAMPLES)
-/** 编码器 1 LSB 对应的机械角分辨率 (rad) */
-#define PROGRAM_ENCODER_LSB_RAD               (MOTOR_TWO_PI / 65536.0f)
-/** 速度零位保持：量化噪声倍数阈值 */
-#define PROGRAM_SPEED_MEAS_ZERO_HOLD_SCALE    8.0f
-/** 速度零位保持：最小机械转速死区 (rad/s) */
-#define PROGRAM_SPEED_MEAS_ZERO_HOLD_MIN_MECH_RAD_S 0.35f
 
 /* ── 开环拖动参数 ── */
 /** 开环拖动电角速度 (rad/s) */
@@ -93,18 +63,6 @@
 #define PROGRAM_DEFAULT_POSITION_SPEED_LIMIT_MECH_RAD_S (PROGRAM_DEFAULT_SPEED_REF_MECH_RAD_S / MOTOR_GEAR_RATIO)
 /** 位置测量 LPF 截止频率 (Hz) */
 #define PROGRAM_POSITION_MEAS_LPF_CUTOFF_HZ   12.0f
-/** 位置 hold：进入保持的误差阈值 (rad) ≈ 1.2° */
-#define PROGRAM_POSITION_HOLD_ERR_RAD         0.021f
-/** 位置 hold：退出保持的误差阈值 (rad) ≈ 1.8° */
-#define PROGRAM_POSITION_HOLD_RELEASE_ERR_RAD 0.031f
-/** 位置 hold：保持时允许的最大输出速度 (rad/s) */
-#define PROGRAM_POSITION_HOLD_SPEED_MECH_RAD_S 0.50f
-/** 位置 hold：连续超阈值周期数才释放 */
-#define PROGRAM_POSITION_HOLD_RELEASE_CONFIRM_CYCLES 12U
-/** 位置 creep：启动蠕动的误差阈值 (rad) ≈ 2.6° */
-#define PROGRAM_POSITION_CREEP_ENABLE_ERR_RAD 0.045f
-/** 位置 creep：蠕动补偿速度 (rad/s) */
-#define PROGRAM_POSITION_CREEP_SPEED_MECH_RAD_S 0.020f
 
 /* ── 电流环参数 ── */
 /** 默认 q 轴电流限幅 (A) */
@@ -146,14 +104,6 @@
 /* ── 编码器观测器 ── */
 /** 连续角重归一化阈值圈数 */
 #define PROGRAM_ENCODER_OBSERVER_RENORM_TURNS 32.0f
-/** 连续角重归一化阈值 (rad) */
-#define PROGRAM_ENCODER_OBSERVER_RENORM_RAD   (PROGRAM_ENCODER_OBSERVER_RENORM_TURNS * MOTOR_TWO_PI)
-/** A 相电流符号（±1，硬件接线方向校正） */
-#define PROGRAM_CURRENT_SIGN_IA               (1.0f)
-/** B 相电流符号 */
-#define PROGRAM_CURRENT_SIGN_IB               (1.0f)
-/** C 相电流符号 */
-#define PROGRAM_CURRENT_SIGN_IC               (1.0f)
 
 /* ── debug PWM 测试 ── */
 /** debug PWM 默认 A 相占空比 */
@@ -197,23 +147,14 @@ static uint8_t g_tim1_pwm_started = 0U;
 /** 功率级使能状态：1=唤醒, 0=休眠 */
 uint8_t g_power_stage_enabled = 0U;
 
-/* ── 编码器观测器与零位对齐 ── */
-/** 编码器上一次样本计数器，用于检测新样本到达 */
-uint32_t g_encoder_last_sample_counter = 0U;
+/* ── 编码器观测器与零位对齐（跨文件接口部分） ── */
+/* 注：观测器内部状态和 sin/cos 采样累积量已封装在 program_svpwm.c 的静态结构体中 */
 /** 编码器速度观测器已初始化（首次角度已记录） */
 uint8_t  g_encoder_speed_primed = 0U;
 /** 编码器速度测量就绪（满一个窗口后置位） */
 uint8_t  g_encoder_speed_ready = 0U;
 /** 速度环更新挂起标志（窗口触发时置位，速度环消费后清除） */
 uint8_t  g_speed_loop_update_pending = 0U;
-/** 编码器上一拍机械角 (rad)，用于差分计算 */
-float    g_encoder_prev_mech_angle_rad = 0.0f;
-/** 编码器连续累加机械角 (rad)，处理 0/360 跳变 */
-float    g_encoder_continuous_mech_rad = 0.0f;
-/** 速度观测窗口起点机械角 (rad) */
-float    g_encoder_speed_window_start_mech_rad = 0.0f;
-/** 速度观测窗口内已累积拍数 */
-uint32_t g_encoder_speed_window_sample_count = 0U;
 /** 未滤波的机械角速度 (rad/s)，窗口差分原始值 */
 float    g_encoder_speed_raw_mech_rad_s = 0.0f;
 /** 编码器零位对齐完成标志 */
@@ -222,12 +163,6 @@ uint8_t  g_encoder_align_done = 0U;
 uint32_t g_encoder_align_counter = 0U;
 /** 编码器电角偏置 (rad)：θe = 编码器电角 - offset */
 float    g_encoder_elec_offset_rad = 0.0f;
-/** 对齐采样窗口 sin 累加和 */
-float    g_encoder_align_sum_sin = 0.0f;
-/** 对齐采样窗口 cos 累加和 */
-float    g_encoder_align_sum_cos = 0.0f;
-/** 对齐采样窗口已采集样本数 */
-uint32_t g_encoder_align_sample_count = 0U;
 
 /* ── 控制环运行时状态 ── */
 /** 电流斜坡：实际生效的 id 给定 (A)，逐步逼近目标值 */

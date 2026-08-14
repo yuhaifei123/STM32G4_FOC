@@ -114,18 +114,4 @@ void motor_state_task(motor_state_t *motor, foc_core_t *foc, uint32_t now_ms);
  */
 void motor_state_set_run_request(motor_state_t *motor, uint8_t enable);
 
-/**
- * 设置故障码并触发故障状态
- * @param motor      状态机对象指针
- * @param fault_code  故障码（motor_fault_t 枚举值）
- */
-void motor_state_set_fault(motor_state_t *motor, uint8_t fault_code);
-
-/**
- * 清除故障码，允许从 FAULT 状态恢复
- * @param motor  状态机对象指针
- */
-void motor_state_clear_fault(motor_state_t *motor);
-
-
 #endif /* MOTOR_STATE_H */

@@ -28,16 +28,6 @@ void cli_uart_init(UART_HandleTypeDef *huart)
     g_cli_uart_tx_busy = 0U;
 }
 
-/* 函数作用：查询当前串口 DMA 发送是否忙。
- * 输入：无。
- * 输出：返回 1 表示上一帧仍在发送，返回 0 表示当前空闲。
- * 调用频率：后台任务发波形前按需调用。
- * 运行内容：只读取内部忙标志，不做额外计算。 */
-uint8_t cli_uart_is_tx_busy(void)
-{
-    return g_cli_uart_tx_busy;
-}
-
 /* 函数作用：发送一段阻塞式短文本，主要留给串口调试打印使用。
  * 输入：text 为以 '\0' 结尾的字符串。
  * 输出：无返回值。

@@ -28,7 +28,6 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
-#include "Common_Utils.h"
 #include "program.h"
 /* USER CODE END Includes */
 

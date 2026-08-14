@@ -46,13 +46,11 @@ void drv_pid_pi_init(drv_pid_pi_t *pid,
 void drv_pid_pi_reset(drv_pid_pi_t *pid, int32_t out_init);
 
 /**
- * @brief  执行一次 PI 更新
+ * @brief  执行一步 PI 运算（带抗饱和）
  * @param  pid       控制器对象
- * @param  ref       参考值
- * @param  feedback  反馈值（与 ref 量纲必须一致）
- * @return 本次 PI 输出，同时内部状态会回写到 pid 结构体
- * @note   运行频率: 由上层控制环按固定节拍调用
- *          运行内容: 计算误差、比例项和积分项，做抗饱和处理后输出控制量
+ * @param  ref       本次参考值（目标值）
+ * @param  feedback  本次反馈值（实际测量值）
+ * @return 限幅后的控制器输出
  */
 int32_t drv_pid_pi_step(drv_pid_pi_t *pid, int32_t ref, int32_t feedback);
 

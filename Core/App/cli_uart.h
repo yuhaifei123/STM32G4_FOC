@@ -26,10 +26,4 @@ void     cli_uart_send_text(const char *text);
  */
 uint8_t  cli_uart_send_vofa(const float *values, uint8_t count);
 
-/**
- * ²éÑ¯ DMA ·¢ËÍÊÇ·ñÃ¦Âµ
- * @return 1=Ã¦ÂµÖĞ, 0=¿ÕÏĞ
- */
-uint8_t  cli_uart_is_tx_busy(void);
-
 #endif /* CLI_UART_H */

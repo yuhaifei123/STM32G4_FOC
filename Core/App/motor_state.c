@@ -325,31 +325,3 @@ void motor_state_set_run_request(motor_state_t *motor, uint8_t enable)
 
     motor->run_request = enable;
 }
-
-/* 函数作用：设置故障码。
- * 输入：motor 为状态机对象，fault_code 为故障类型。
- * 输出：无返回值。
- * 调用频率：检测到故障条件时按需调用。
- * 运行内容：写入故障码，状态机会在下一拍进入 FAULT。 */
-void motor_state_set_fault(motor_state_t *motor, uint8_t fault_code)
-{
-    if (motor == 0) {
-        return;
-    }
-
-    motor->fault_code = fault_code;
-}
-
-/* 函数作用：清除故障码。
- * 输入：motor 为状态机对象。
- * 输出：无返回值。
- * 调用频率：确认故障解除后按需调用。
- * 运行内容：把故障码恢复为 NONE，允许状态机回到 READY。 */
-void motor_state_clear_fault(motor_state_t *motor)
-{
-    if (motor == 0) {
-        return;
-    }
-
-    motor->fault_code = MOTOR_FAULT_NONE;
-}

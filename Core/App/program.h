@@ -7,14 +7,67 @@
 #include "usart.h"
 #include "motor_state.h"
 #include "foc_core.h"
+#include "motor_params.h"
 
 /* ── 系统级宏定义（program.c / program_current.c / program_svpwm.c 共用）── */
+/** 圆周率 π */
 #define PROGRAM_PI                            3.14159265359f
+/** 快环频率 (Hz) = 10kHz */
 #define PROGRAM_FAST_LOOP_HZ                  10000.0f
+/** 快环周期 (s) = 100μs */
 #define PROGRAM_FAST_LOOP_DT_S                (1.0f / PROGRAM_FAST_LOOP_HZ)
+/** 快环周期 (μs) = 100μs，DWT 超时判定用 */
 #define PROGRAM_FAST_LOOP_PERIOD_US           (1000000.0f / PROGRAM_FAST_LOOP_HZ)
+/** 速度参考斜坡速率 (rad/s?)，防止速度指令突变 */
 #define PROGRAM_SPEED_REF_RAMP_RAD_S2         100.0f
+/** 电流参考斜坡速率 (A/s)，防止电流指令突变造成转矩冲击 */
 #define PROGRAM_CURRENT_REF_RAMP_A_PER_S      150.0f
+
+/* ── ADC 硬件参数 ── */
+/** ADC 参考电压 (V) */
+#define PROGRAM_ADC_REF_V                     3.3f
+/** ADC 满量程码值 (12bit) */
+#define PROGRAM_ADC_FULL_SCALE_COUNTS         4095.0f
+/** 采样电阻阻值 (Ω)，串在电机相线上 */
+#define PROGRAM_SHUNT_RESISTOR_OHM            0.01f
+/** INA240 电流检测放大器固定增益 (V/V) */
+#define PROGRAM_CURRENT_SENSE_GAIN            20.0f
+/** 母线分压电阻上臂 (Ω) */
+#define PROGRAM_VBUS_R_UP_OHM                 240000.0f
+/** 母线分压电阻下臂 (Ω) */
+#define PROGRAM_VBUS_R_DOWN_OHM               10000.0f
+
+/* ── 位置环 hold/creep 阈值 ── */
+/** 位置 hold：进入保持的误差阈值 (rad) ≈ 1.2° */
+#define PROGRAM_POSITION_HOLD_ERR_RAD         0.021f
+/** 位置 hold：退出保持的误差阈值 (rad) ≈ 1.8°（滞回） */
+#define PROGRAM_POSITION_HOLD_RELEASE_ERR_RAD 0.031f
+/** 位置 hold：保持时允许的最大输出速度 (rad/s) */
+#define PROGRAM_POSITION_HOLD_SPEED_MECH_RAD_S 0.50f
+/** 位置 hold：连续超阈值周期数才释放（防抖） */
+#define PROGRAM_POSITION_HOLD_RELEASE_CONFIRM_CYCLES 12U
+/** 位置 creep：启动蠕动的误差阈值 (rad) ≈ 2.6° */
+#define PROGRAM_POSITION_CREEP_ENABLE_ERR_RAD 0.045f
+/** 位置 creep：蠕动补偿速度 (rad/s)，克服摩擦死区 */
+#define PROGRAM_POSITION_CREEP_SPEED_MECH_RAD_S 0.020f
+
+/* ── 电流符号（硬件接线方向校正） ── */
+/** A 相电流符号（±1，硬件接线方向校正） */
+#define PROGRAM_CURRENT_SIGN_IA               (1.0f)
+/** B 相电流符号 */
+#define PROGRAM_CURRENT_SIGN_IB               (1.0f)
+/** C 相电流符号 */
+#define PROGRAM_CURRENT_SIGN_IC               (1.0f)
+
+/* ── 编码器观测与量化保护 ── */
+/** 连续角重归一化阈值 (rad) = 32 圈，防止浮点精度丢失 */
+#define PROGRAM_ENCODER_OBSERVER_RENORM_RAD   (32.0f * MOTOR_TWO_PI)
+/** 编码器 1 LSB 对应的机械角分辨率 (rad) */
+#define PROGRAM_ENCODER_LSB_RAD               (MOTOR_TWO_PI / 65536.0f)
+/** 速度零位保持：量化噪声倍数阈值 */
+#define PROGRAM_SPEED_MEAS_ZERO_HOLD_SCALE    8.0f
+/** 速度零位保持：最小机械转速死区 (rad/s)，低于此值强制归零 */
+#define PROGRAM_SPEED_MEAS_ZERO_HOLD_MIN_MECH_RAD_S 0.35f
 
 /*
  * 程序层遥测结构体：集中存放所有调试和监控变量。

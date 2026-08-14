@@ -53,16 +53,16 @@ extern float    g_encoder_elec_offset_rad;
 
 float program_convert_current_from_raw(uint16_t raw, uint16_t offset_raw)
 {
-    float volts_per_count = 3.3f / 4095.0f;
+    float volts_per_count = PROGRAM_ADC_REF_V / PROGRAM_ADC_FULL_SCALE_COUNTS;
     float sense_voltage = ((float)raw - (float)offset_raw) * volts_per_count;
-    return sense_voltage / (20.0f * 0.01f);
+    return sense_voltage / (PROGRAM_CURRENT_SENSE_GAIN * PROGRAM_SHUNT_RESISTOR_OHM);
 }
 
 float program_convert_vbus_from_raw(uint16_t raw)
 {
-    float volts_per_count = 3.3f / 4095.0f;
+    float volts_per_count = PROGRAM_ADC_REF_V / PROGRAM_ADC_FULL_SCALE_COUNTS;
     float adc_input_voltage = (float)raw * volts_per_count;
-    return adc_input_voltage * ((240000.0f + 10000.0f) / 10000.0f);
+    return adc_input_voltage * ((PROGRAM_VBUS_R_UP_OHM + PROGRAM_VBUS_R_DOWN_OHM) / PROGRAM_VBUS_R_DOWN_OHM);
 }
 
 /* ── PI 控制器 ── */
@@ -256,9 +256,9 @@ void program_update_current_feedback_from_raw(uint16_t ia_raw, uint16_t ib_raw,
         return;
     }
 
-    ia_meas = 1.0f * program_convert_current_from_raw(ia_raw, g_program_telemetry.ia_offset_raw);
-    ib_meas = 1.0f * program_convert_current_from_raw(ib_raw, g_program_telemetry.ib_offset_raw);
-    ic_meas = 1.0f * program_convert_current_from_raw(ic_raw, g_program_telemetry.ic_offset_raw);
+    ia_meas = PROGRAM_CURRENT_SIGN_IA * program_convert_current_from_raw(ia_raw, g_program_telemetry.ia_offset_raw);
+    ib_meas = PROGRAM_CURRENT_SIGN_IB * program_convert_current_from_raw(ib_raw, g_program_telemetry.ib_offset_raw);
+    ic_meas = PROGRAM_CURRENT_SIGN_IC * program_convert_current_from_raw(ic_raw, g_program_telemetry.ic_offset_raw);
 
     g_program_telemetry.ia = ia_meas;
     g_program_telemetry.ib = ib_meas;
@@ -352,7 +352,8 @@ void program_update_position_loop(float position_loop_dt_s)
     speed_meas_abs_rad_s = fabsf(position_speed_meas_output_mech_rad_s);
 
     /* Hold: 位置误差和速度都在阈值内 → 刹车保持 */
-    if ((position_error_abs_rad <= 0.021f) && (speed_meas_abs_rad_s <= 0.50f)) {
+    if ((position_error_abs_rad <= PROGRAM_POSITION_HOLD_ERR_RAD) &&
+        (speed_meas_abs_rad_s <= PROGRAM_POSITION_HOLD_SPEED_MECH_RAD_S)) {
         g_position_hold_active = 1U;
         g_position_hold_release_counter = 0U;
         g_motor.position_integral_speed = 0.0f;
@@ -362,7 +363,7 @@ void program_update_position_loop(float position_loop_dt_s)
         return;
     }
     if (g_position_hold_active != 0U) {
-        if (position_error_abs_rad <= 0.031f) {
+        if (position_error_abs_rad <= PROGRAM_POSITION_HOLD_RELEASE_ERR_RAD) {
             g_position_hold_release_counter = 0U;
             g_motor.position_integral_speed = 0.0f;
             g_motor.position_error_mech_deg = 0.0f;
@@ -371,7 +372,7 @@ void program_update_position_loop(float position_loop_dt_s)
             return;
         }
         g_position_hold_release_counter++;
-        if (g_position_hold_release_counter < 12U) {
+        if (g_position_hold_release_counter < PROGRAM_POSITION_HOLD_RELEASE_CONFIRM_CYCLES) {
             g_motor.position_integral_speed = 0.0f;
             g_motor.position_error_mech_deg = 0.0f;
             g_motor.position_error_mech_rad = 0.0f;
@@ -397,11 +398,11 @@ void program_update_position_loop(float position_loop_dt_s)
         -position_speed_limit_mech_rad_s, position_speed_limit_mech_rad_s);
 
     /* Creep: 缓慢蠕动防止卡在摩擦死区 */
-    if ((position_error_abs_rad > 0.045f) &&
-        (fabsf(position_speed_cmd_output_mech_rad_s) < 0.020f) &&
-        (speed_meas_abs_rad_s <= 0.50f)) {
+    if ((position_error_abs_rad > PROGRAM_POSITION_CREEP_ENABLE_ERR_RAD) &&
+        (fabsf(position_speed_cmd_output_mech_rad_s) < PROGRAM_POSITION_CREEP_SPEED_MECH_RAD_S) &&
+        (speed_meas_abs_rad_s <= PROGRAM_POSITION_HOLD_SPEED_MECH_RAD_S)) {
         position_speed_cmd_output_mech_rad_s =
-            copysignf(0.020f, position_error_wrapped_rad);
+            copysignf(PROGRAM_POSITION_CREEP_SPEED_MECH_RAD_S, position_error_wrapped_rad);
     }
     g_motor.speed_ref_mech_rad_s = position_speed_cmd_output_mech_rad_s * MOTOR_GEAR_RATIO;
 }

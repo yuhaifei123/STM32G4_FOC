@@ -9,53 +9,58 @@
  */
 #include "program_svpwm.h"
 #include "program_current.h"
-
 #include <math.h>
-
 #include "filter.h"
 #include "foc_core.h"
 #include "ma600a.h"
 #include "motor_params.h"
 
-/* ── 来自 program.c 的外部变量 ── */
-extern ma600a_t        g_ma600a;
-extern motor_state_t   g_motor;
-extern foc_core_t      g_foc;
-extern volatile program_telemetry_t      g_program_telemetry;
-extern volatile program_debug_pwm_test_t g_program_debug_pwm_test;
+/* ── 来自 program.c 的外部变量（跨文件共享接口） ── */
+extern ma600a_t        g_ma600a;                        /* MA600A 磁编码器对象，存储角度和通信状态 */
+extern motor_state_t   g_motor;                         /* 电机状态机对象，管理运行状态和所有控制参数 */
 
-extern volatile uint16_t g_adc2_dma_buf[];
-extern volatile uint32_t g_tim6_tick_ms;
-extern volatile uint32_t g_ia_offset_sum;
-extern volatile uint32_t g_ib_offset_sum;
-extern volatile uint32_t g_ic_offset_sum;
+extern uint8_t  g_encoder_speed_primed;                 /* 编码器速度观测器已初始化（首次角度已记录） */
+extern uint8_t  g_encoder_speed_ready;                  /* 编码器速度测量就绪（满一个窗口后置位） */
+extern uint8_t  g_speed_loop_update_pending;            /* 速度环更新挂起标志（窗口触发时置位，速度环消费后清除） */
+extern float    g_encoder_speed_raw_mech_rad_s;         /* 未滤波的机械角速度 (rad/s)，窗口差分原始值 */
+extern uint8_t  g_encoder_align_done;                   /* 编码器零位对齐完成标志 */
+extern uint32_t g_encoder_align_counter;                /* 编码器对齐计时器（每 100μs 加 1） */
+extern float    g_encoder_elec_offset_rad;              /* 编码器电角偏置 (rad)：θe = 编码器电角 - offset */
 
-extern uint32_t g_encoder_last_sample_counter;
-extern uint8_t  g_encoder_speed_primed;
-extern uint8_t  g_encoder_speed_ready;
-extern uint8_t  g_speed_loop_update_pending;
-extern float    g_encoder_prev_mech_angle_rad;
-extern float    g_encoder_continuous_mech_rad;
-extern float    g_encoder_speed_window_start_mech_rad;
-extern uint32_t g_encoder_speed_window_sample_count;
-extern float    g_encoder_speed_raw_mech_rad_s;
-extern uint8_t  g_encoder_align_done;
-extern uint32_t g_encoder_align_counter;
-extern float    g_encoder_elec_offset_rad;
-extern float    g_encoder_align_sum_sin;
-extern float    g_encoder_align_sum_cos;
-extern uint32_t g_encoder_align_sample_count;
+extern filter_lpf_f32_t g_speed_meas_lpf;               /* 速度测量一阶低通滤波器 */
+extern filter_lpf_f32_t g_position_meas_lpf;            /* 位置测量一阶低通滤波器 */
+extern float g_speed_loop_dt_s;                         /* 速度环当前控制周期 (s) */
+extern float g_position_meas_output_continuous_rad;     /* 位置测量：输出轴连续机械角 (rad) */
 
-extern float g_id_ref_applied_a;
-extern float g_iq_ref_applied_a;
-extern filter_lpf_f32_t g_speed_meas_lpf;
-extern filter_lpf_f32_t g_position_meas_lpf;
-extern float g_speed_loop_dt_s;
-extern float g_position_meas_output_continuous_rad;
+/* ── 零位对齐时序（快环 100μs/拍） ── */
+/** 对齐总计时拍数（8000 拍 = 800ms） */
+#define PROGRAM_ALIGN_TOTAL_TICKS          8000U
+/** 对齐采样窗口拍数（最后 512 拍 = 51.2ms） */
+#define PROGRAM_ALIGN_SAMPLE_WINDOW_TICKS  512U
 
-extern uint8_t g_power_stage_enabled;
-extern uint8_t g_position_hold_active;
-extern uint8_t g_position_hold_release_counter;
+/* ── 文件内静态状态：编码器观测器与零位对齐累积（仅本文件使用） ── */
+
+/** 编码器测速观测器状态 */
+typedef struct {
+    uint32_t last_sample_counter;         /* 上一次样本计数器，用于检测新样本到达 */
+    float    prev_mech_angle_rad;         /* 上一拍机械角 (rad)，用于差分计算 */
+    float    continuous_mech_rad;         /* 连续累加机械角 (rad)，处理 0/360 跳变 */
+    float    speed_window_start_mech_rad; /* 速度观测窗口起点机械角 (rad) */
+    uint32_t speed_window_sample_count;   /* 速度观测窗口内已累积拍数 */
+} encoder_observer_t;
+
+/** 编码器测速观测器静态实例 */
+static encoder_observer_t s_encoder_observer;
+
+/** 零位对齐采样累积量 */
+typedef struct {
+    float    sum_sin;       /* 对齐采样窗口 sin 累加和 */
+    float    sum_cos;       /* 对齐采样窗口 cos 累加和 */
+    uint32_t sample_count;  /* 对齐采样窗口已采集样本数 */
+} encoder_align_t;
+
+/** 零位对齐采样累积量静态实例 */
+static encoder_align_t s_encoder_align;
 
 /**
  * @brief  限制浮点量上下界 [min, max]
@@ -185,7 +190,7 @@ float program_rpm_to_rad_s(float speed_rpm)
 float program_get_speed_quantization_rad_s(uint32_t observer_window_samples)
 {
     if (observer_window_samples == 0U) return 0.0f;
-    return (MOTOR_TWO_PI / 65536.0f) / (PROGRAM_FAST_LOOP_DT_S * (float)observer_window_samples);
+    return PROGRAM_ENCODER_LSB_RAD / (PROGRAM_FAST_LOOP_DT_S * (float)observer_window_samples);
 }
 
 /**
@@ -202,10 +207,11 @@ float program_apply_speed_quantization_guard(float speed_mech_rad_s,
 {
     float zero_hold_threshold_rad_s;
     if (!isfinite(speed_mech_rad_s)) return 0.0f;
-    zero_hold_threshold_rad_s = 8.0f * program_get_speed_quantization_rad_s(observer_window_samples);
+    zero_hold_threshold_rad_s = PROGRAM_SPEED_MEAS_ZERO_HOLD_SCALE * program_get_speed_quantization_rad_s(observer_window_samples);
     if ((!isfinite(zero_hold_threshold_rad_s)) || (zero_hold_threshold_rad_s <= 0.0f))
         return speed_mech_rad_s;
-    if (zero_hold_threshold_rad_s < 0.35f) zero_hold_threshold_rad_s = 0.35f;
+    if (zero_hold_threshold_rad_s < PROGRAM_SPEED_MEAS_ZERO_HOLD_MIN_MECH_RAD_S)
+        zero_hold_threshold_rad_s = PROGRAM_SPEED_MEAS_ZERO_HOLD_MIN_MECH_RAD_S;
     if ((fabsf(g_motor.speed_ref_mech_applied_rad_s) <= zero_hold_threshold_rad_s) &&
         (fabsf(speed_mech_rad_s) <= zero_hold_threshold_rad_s))
         return 0.0f;
@@ -234,7 +240,7 @@ float program_get_encoder_output_continuous_mech_angle_rad(void)
 {
     float rotor_mech_angle_rad;
     if (g_encoder_speed_primed != 0U)
-        rotor_mech_angle_rad = g_encoder_continuous_mech_rad;
+        rotor_mech_angle_rad = s_encoder_observer.continuous_mech_rad;
     else
         rotor_mech_angle_rad = program_get_encoder_rotor_mech_angle_rad();
     if ((!isfinite(rotor_mech_angle_rad)) || (MOTOR_GEAR_RATIO <= 0.0f)) return 0.0f;
@@ -307,13 +313,13 @@ void program_update_control_angle_open_loop_state(void)
  */
 void program_reset_encoder_observer(void)
 {
-    g_encoder_last_sample_counter = 0U;
+    s_encoder_observer.last_sample_counter = 0U;
     g_encoder_speed_primed = 0U;
     g_encoder_speed_ready = 0U;
-    g_encoder_prev_mech_angle_rad = 0.0f;
-    g_encoder_continuous_mech_rad = 0.0f;
-    g_encoder_speed_window_start_mech_rad = 0.0f;
-    g_encoder_speed_window_sample_count = 0U;
+    s_encoder_observer.prev_mech_angle_rad = 0.0f;
+    s_encoder_observer.continuous_mech_rad = 0.0f;
+    s_encoder_observer.speed_window_start_mech_rad = 0.0f;
+    s_encoder_observer.speed_window_sample_count = 0U;
     g_encoder_speed_raw_mech_rad_s = 0.0f;
     g_motor.speed_meas_mech_rad_s = 0.0f;
     g_motor.speed_meas_elec_rad_s = 0.0f;
@@ -342,22 +348,22 @@ static void program_renormalize_encoder_observer(void)
     /** 锚定弧度 = 圈数 × 2π */
     float anchor_rad;
     /** 连续角或窗口起点出现 NaN/Inf → 复位观测器 */
-    if ((!isfinite(g_encoder_continuous_mech_rad)) ||
-        (!isfinite(g_encoder_speed_window_start_mech_rad)) ||
+    if ((!isfinite(s_encoder_observer.continuous_mech_rad)) ||
+        (!isfinite(s_encoder_observer.speed_window_start_mech_rad)) ||
         (!isfinite(g_encoder_speed_raw_mech_rad_s))) {
         program_reset_encoder_observer();
         return;
     }
     /** 连续角和窗口起点均 < 32 圈 → 无需重归一化 */
-    if ((fabsf(g_encoder_continuous_mech_rad) < (32.0f * MOTOR_TWO_PI)) &&
-        (fabsf(g_encoder_speed_window_start_mech_rad) < (32.0f * MOTOR_TWO_PI)))
+    if ((fabsf(s_encoder_observer.continuous_mech_rad) < PROGRAM_ENCODER_OBSERVER_RENORM_RAD) &&
+        (fabsf(s_encoder_observer.speed_window_start_mech_rad) < PROGRAM_ENCODER_OBSERVER_RENORM_RAD))
         return;
     /** 取整数圈数作为锚点 */
-    anchor_turns = floorf(g_encoder_continuous_mech_rad / MOTOR_TWO_PI);
+    anchor_turns = floorf(s_encoder_observer.continuous_mech_rad / MOTOR_TWO_PI);
     anchor_rad = anchor_turns * MOTOR_TWO_PI;
     /** 连续角和窗口起点同时减去整数圈，保持差值不变 */
-    g_encoder_continuous_mech_rad -= anchor_rad;
-    g_encoder_speed_window_start_mech_rad -= anchor_rad;
+    s_encoder_observer.continuous_mech_rad -= anchor_rad;
+    s_encoder_observer.speed_window_start_mech_rad -= anchor_rad;
 }
 
 /**
@@ -382,23 +388,23 @@ void program_update_speed_measurement(void)
     /** 编码器数据无效 → 跳过本拍 */
     if (g_ma600a.data_valid == 0U) return;
     /** 无新样本到达（counter 未变）→ 跳过 */
-    if (g_ma600a.sample_counter == g_encoder_last_sample_counter) return;
+    if (g_ma600a.sample_counter == s_encoder_observer.last_sample_counter) return;
 
     /** 获取当前拍转子机械角 (rad)，归一化到 [0, 2π) */
     mech_angle_rad = program_wrap_angle_0_2pi(program_get_encoder_rotor_mech_angle_rad());
     /** 两次有效样本间的计数器增量（>1 表示有丢样本） */
-    sample_delta_count = g_ma600a.sample_counter - g_encoder_last_sample_counter;
+    sample_delta_count = g_ma600a.sample_counter - s_encoder_observer.last_sample_counter;
     if (sample_delta_count == 0U) return;
     /** 更新最新样本计数器 */
-    g_encoder_last_sample_counter = g_ma600a.sample_counter;
+    s_encoder_observer.last_sample_counter = g_ma600a.sample_counter;
 
     /* ══ 首次采样：初始化观测器基准值 ══ */
     if (g_encoder_speed_primed == 0U) {
-        g_encoder_prev_mech_angle_rad = mech_angle_rad;          /** 记录初始角度 */
-        g_encoder_continuous_mech_rad = mech_angle_rad;          /** 连续角起点 */
+        s_encoder_observer.prev_mech_angle_rad = mech_angle_rad;          /** 记录初始角度 */
+        s_encoder_observer.continuous_mech_rad = mech_angle_rad;          /** 连续角起点 */
         g_motor.position_meas_mech_rad = program_get_encoder_output_mech_angle_rad();
-        g_encoder_speed_window_start_mech_rad = mech_angle_rad;  /** 窗口起点 */
-        g_encoder_speed_window_sample_count = 0U;                /** 窗口计数清零 */
+        s_encoder_observer.speed_window_start_mech_rad = mech_angle_rad;  /** 窗口起点 */
+        s_encoder_observer.speed_window_sample_count = 0U;                /** 窗口计数清零 */
         g_encoder_speed_raw_mech_rad_s = 0.0f;
         g_encoder_speed_primed = 1U;                             /** 首次角度已记录 */
         g_encoder_speed_ready = 0U;                              /** 速度尚未就绪 */
@@ -409,11 +415,11 @@ void program_update_speed_measurement(void)
 
     /* ══ 正常累加：计算本拍角差 → 累加到连续角 → 窗口计数递增 ══ */
     /** 本拍角差（处理 0°/360° 跳变） */
-    mech_delta_rad = program_wrap_delta_pm_pi(mech_angle_rad - g_encoder_prev_mech_angle_rad);
+    mech_delta_rad = program_wrap_delta_pm_pi(mech_angle_rad - s_encoder_observer.prev_mech_angle_rad);
     if (!isfinite(mech_delta_rad)) { program_reset_encoder_observer(); return; }
-    g_encoder_prev_mech_angle_rad = mech_angle_rad;
-    g_encoder_continuous_mech_rad += mech_delta_rad;             /** 连续角累加 */
-    g_encoder_speed_window_sample_count += sample_delta_count;   /** 窗口计数累加 */
+    s_encoder_observer.prev_mech_angle_rad = mech_angle_rad;
+    s_encoder_observer.continuous_mech_rad += mech_delta_rad;             /** 连续角累加 */
+    s_encoder_observer.speed_window_sample_count += sample_delta_count;   /** 窗口计数累加 */
     /** 防止连续角无限增长导致浮点精度丢失 */
     program_renormalize_encoder_observer();
     /** 同步更新位置测量值 */
@@ -422,10 +428,10 @@ void program_update_speed_measurement(void)
         program_rad_to_deg(g_motor.position_meas_mech_rad));
 
     /** 窗口未满 20 拍 → 继续积累，不计算速度 */
-    if (g_encoder_speed_window_sample_count < 20U) return;
+    if (s_encoder_observer.speed_window_sample_count < 20U) return;
 
     /* ══ 窗口满：差分计算原始速度 ══ */
-    observer_window_samples = g_encoder_speed_window_sample_count;
+    observer_window_samples = s_encoder_observer.speed_window_sample_count;
     /** 窗口时间跨度 = 快环周期 × 拍数 */
     observer_dt_s = PROGRAM_FAST_LOOP_DT_S * (float)observer_window_samples;
     if ((!isfinite(observer_dt_s)) || (observer_dt_s <= 0.0f))
@@ -433,12 +439,12 @@ void program_update_speed_measurement(void)
 
     /** 速度 = (终点角度 - 起点角度) / 时间 */
     g_encoder_speed_raw_mech_rad_s =
-        (g_encoder_continuous_mech_rad - g_encoder_speed_window_start_mech_rad) / observer_dt_s;
+        (s_encoder_observer.continuous_mech_rad - s_encoder_observer.speed_window_start_mech_rad) / observer_dt_s;
     if (!isfinite(g_encoder_speed_raw_mech_rad_s)) { program_reset_encoder_observer(); return; }
 
     /** 重置窗口：起点拉到当前连续角，计数清零，开启下一窗口 */
-    g_encoder_speed_window_start_mech_rad = g_encoder_continuous_mech_rad;
-    g_encoder_speed_window_sample_count = 0U;
+    s_encoder_observer.speed_window_start_mech_rad = s_encoder_observer.continuous_mech_rad;
+    s_encoder_observer.speed_window_sample_count = 0U;
     g_speed_loop_dt_s = observer_dt_s;                           /** 速度环实际调用周期 */
     /** 更新 LPF 系数，匹配当前的观测周期 */
     g_speed_meas_lpf.alpha = program_lpf_alpha_from_cutoff_hz(
@@ -488,9 +494,9 @@ void program_reset_encoder_alignment(void)
 void program_reset_encoder_align_runtime(void)
 {
     g_encoder_align_counter = 0U;
-    g_encoder_align_sum_sin = 0.0f;
-    g_encoder_align_sum_cos = 0.0f;
-    g_encoder_align_sample_count = 0U;
+    s_encoder_align.sum_sin = 0.0f;
+    s_encoder_align.sum_cos = 0.0f;
+    s_encoder_align.sample_count = 0U;
 }
 
 /**
@@ -503,13 +509,12 @@ void program_capture_encoder_alignment_sample(void)
 {
     uint32_t sample_window_start_tick;
     float raw_theta_elec;
-    sample_window_start_tick = 0U;
-    if (8000U > 512U) sample_window_start_tick = 8000U - 512U;
+    sample_window_start_tick = PROGRAM_ALIGN_TOTAL_TICKS - PROGRAM_ALIGN_SAMPLE_WINDOW_TICKS;
     if (g_encoder_align_counter < sample_window_start_tick) return;
     raw_theta_elec = program_get_encoder_raw_elec_angle_rad();
-    g_encoder_align_sum_sin += sinf(raw_theta_elec);
-    g_encoder_align_sum_cos += cosf(raw_theta_elec);
-    g_encoder_align_sample_count++;
+    s_encoder_align.sum_sin += sinf(raw_theta_elec);
+    s_encoder_align.sum_cos += cosf(raw_theta_elec);
+    s_encoder_align.sample_count++;
 }
 
 /**
@@ -522,9 +527,9 @@ void program_capture_encoder_alignment_sample(void)
 float program_get_encoder_alignment_angle_rad(void)
 {
     float raw_theta_elec;
-    if (g_encoder_align_sample_count == 0U)
+    if (s_encoder_align.sample_count == 0U)
         return program_get_encoder_raw_elec_angle_rad();
-    raw_theta_elec = atan2f(g_encoder_align_sum_sin, g_encoder_align_sum_cos);
+    raw_theta_elec = atan2f(s_encoder_align.sum_sin, s_encoder_align.sum_cos);
     return program_wrap_angle_0_2pi(raw_theta_elec);
 }
 
