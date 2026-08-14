@@ -57,7 +57,15 @@ extern uint8_t g_power_stage_enabled;
 extern uint8_t g_position_hold_active;
 extern uint8_t g_position_hold_release_counter;
 
-/* 函数作用：限制浮点量上下界。 */
+/**
+ * @brief  限制浮点量上下界 [min, max]
+ * @param  value      输入值
+ * @param  min_value  下限
+ * @param  max_value  上限
+ * @return 限幅后的值
+ * @note   运行频率: 各控制环按需调用
+ *          运行内容: 为电流、电压和速度中间量提供统一限幅
+ */
 float program_clamp_f32(float value, float min_value, float max_value)
 {
     if (value < min_value) return min_value;
@@ -65,7 +73,14 @@ float program_clamp_f32(float value, float min_value, float max_value)
     return value;
 }
 
-/* 函数作用：由截止频率和采样周期换算一阶低通滤波系数。 */
+/**
+ * @brief  由截止频率和采样周期换算一阶低通滤波系数 α
+ * @param  cutoff_hz  截止频率 (Hz)
+ * @param  dt_s       采样周期 (s)
+ * @return 滤波系数 α (0~1)
+ * @note   运行频率: 滤波器初始化或更新系数时调用
+ *          运行内容: α = 1 - exp(-2π·fc·dt)，参数非法时返回 1.0（无滤波）
+ */
 float program_lpf_alpha_from_cutoff_hz(float cutoff_hz, float dt_s)
 {
     float alpha;
@@ -75,7 +90,13 @@ float program_lpf_alpha_from_cutoff_hz(float cutoff_hz, float dt_s)
     return program_clamp_f32(alpha, 0.0f, 1.0f);
 }
 
-/* 函数作用：把角度归一化到 0~2pi。 */
+/**
+ * @brief  把角度归一化到 [0, 2π)
+ * @param  angle_rad  任意浮点角度 (rad)
+ * @return 归一化后的角度，NaN/Inf 返回 0
+ * @note   运行频率: 角度采样和测速处理中按需调用
+ *          运行内容: 通过整圈折返保证角度始终落在单圈范围内
+ */
 float program_wrap_angle_0_2pi(float angle_rad)
 {
     float turns;
@@ -87,14 +108,26 @@ float program_wrap_angle_0_2pi(float angle_rad)
     return angle_rad;
 }
 
-/* 函数作用：把角度差归一化到 -pi~pi。 */
+/**
+ * @brief  把角度差归一化到 [-π, π]
+ * @param  angle_rad  任意角度差 (rad)
+ * @return 最短角度差，NaN/Inf 返回 0
+ * @note   运行频率: 位置误差和速度观测按需调用
+ *          运行内容: 避免跨 0/2π 边界时出现跳变
+ */
 float program_wrap_delta_pm_pi(float angle_rad)
 {
     if (!isfinite(angle_rad)) return 0.0f;
     return program_wrap_angle_0_2pi(angle_rad + PROGRAM_PI) - PROGRAM_PI;
 }
 
-/* 函数作用：把角度归一化到 0~360°。 */
+/**
+ * @brief  把角度归一化到 [0°, 360°)
+ * @param  angle_deg  任意角度 (°)
+ * @return 归一化后的角度，NaN/Inf 返回 0
+ * @note   运行频率: 位置环和遥测更新时调用
+ *          运行内容: 通过整圈折返保证角度落在 0~360° 内
+ */
 float program_wrap_angle_0_360_deg(float angle_deg)
 {
     float turns;
@@ -106,30 +139,64 @@ float program_wrap_angle_0_360_deg(float angle_deg)
     return angle_deg;
 }
 
-/* 函数作用：rad/s → rpm */
+/**
+ * @brief  rad/s → rpm 单位换算
+ * @param  speed_rad_s  角速度 (rad/s)
+ * @return 转速 (rpm)
+ * @note   运行频率: 遥测和参数初始化时按需调用
+ */
 float program_rad_s_to_rpm(float speed_rad_s)
     { return speed_rad_s * (60.0f / MOTOR_TWO_PI); }
 
-/* 函数作用：rad → deg */
+/**
+ * @brief  rad → deg 单位换算
+ * @param  angle_rad  角度 (rad)
+ * @return 角度 (°)，NaN/Inf 返回 0
+ * @note   运行频率: 位置环和遥测更新时按需调用
+ */
 float program_rad_to_deg(float angle_rad)
     { if (!isfinite(angle_rad)) return 0.0f; return angle_rad * (360.0f / MOTOR_TWO_PI); }
 
-/* 函数作用：deg → rad */
+/**
+ * @brief  deg → rad 单位换算
+ * @param  angle_deg  角度 (°)
+ * @return 角度 (rad)，NaN/Inf 返回 0
+ * @note   运行频率: 位置环给定处理时按需调用
+ */
 float program_deg_to_rad(float angle_deg)
     { if (!isfinite(angle_deg)) return 0.0f; return angle_deg * (MOTOR_TWO_PI / 360.0f); }
 
-/* 函数作用：rpm → rad/s */
+/**
+ * @brief  rpm → rad/s 单位换算
+ * @param  speed_rpm  转速 (rpm)
+ * @return 角速度 (rad/s)，NaN/Inf 返回 0
+ * @note   运行频率: 速度给定更新和初始化时调用
+ */
 float program_rpm_to_rad_s(float speed_rpm)
     { if (!isfinite(speed_rpm)) return 0.0f; return speed_rpm * (MOTOR_TWO_PI / 60.0f); }
 
-/* 函数作用：估算编码器测速量化分辨率。 */
+/**
+ * @brief  估算编码器测速量化分辨率
+ * @param  observer_window_samples  测速窗口样本数
+ * @return 最小速度分辨率 (rad/s)
+ * @note   运行频率: 速度测量更新时调用
+ *          运行内容: 按编码器 LSB 和测速窗口长度换算速度量化台阶
+ */
 float program_get_speed_quantization_rad_s(uint32_t observer_window_samples)
 {
     if (observer_window_samples == 0U) return 0.0f;
     return (MOTOR_TWO_PI / 65536.0f) / (PROGRAM_FAST_LOOP_DT_S * (float)observer_window_samples);
 }
 
-/* 函数作用：在低速附近抑制编码器量化抖动。 */
+/**
+ * @brief  在低速附近抑制编码器量化抖动
+ * @param  speed_mech_rad_s         待保护的机械角速度 (rad/s)
+ * @param  observer_window_samples  测速窗口样本数
+ * @return 保护后的机械角速度
+ * @note   运行频率: 每次刷新速度测量后调用
+ *          运行内容: 当速度指令和测速值都接近量化台阶时强制回零，
+ *                    避免静止时微小抖动导致电机微振
+ */
 float program_apply_speed_quantization_guard(float speed_mech_rad_s,
                                              uint32_t observer_window_samples)
 {
@@ -147,13 +214,22 @@ float program_apply_speed_quantization_guard(float speed_mech_rad_s,
 
 /* ── 编码器角度获取 ── */
 
-/* 函数作用：读取编码器对应的转子机械角。 */
+/**
+ * @brief  读取编码器对应的转子机械角
+ * @return 转子机械角 (rad)，已考虑编码器方向符号
+ * @note   运行频率: 编码器采样和角度换算时按需调用
+ */
 float program_get_encoder_rotor_mech_angle_rad(void)
 {
     return g_ma600a.angle_rad * MOTOR_ENCODER_DIRECTION_SIGN;
 }
 
-/* 函数作用：获取输出轴连续机械角。 */
+/**
+ * @brief  获取输出轴连续机械角（无跳变，可超过单圈）
+ * @return 输出轴连续机械角 (rad)
+ * @note   运行频率: 位置环和调试遥测更新时调用
+ *          运行内容: 优先使用连续机械角观测值，再按减速比折算回输出轴
+ */
 float program_get_encoder_output_continuous_mech_angle_rad(void)
 {
     float rotor_mech_angle_rad;
@@ -165,25 +241,44 @@ float program_get_encoder_output_continuous_mech_angle_rad(void)
     return rotor_mech_angle_rad / MOTOR_GEAR_RATIO;
 }
 
-/* 函数作用：获取输出轴单圈机械角。 */
+/**
+ * @brief  获取输出轴单圈机械角（归一化到 [0, 2π)）
+ * @return 输出轴单圈机械角 (rad)
+ * @note   运行频率: 位置环更新时调用
+ */
 float program_get_encoder_output_mech_angle_rad(void)
 {
     return program_wrap_angle_0_2pi(program_get_encoder_output_continuous_mech_angle_rad());
 }
 
-/* 函数作用：获取原始电角度。 */
+/**
+ * @brief  获取未经零位补偿的原始电角度
+ * @return 原始电角度 (rad)
+ * @note   运行频率: 对齐采样和故障前角度观察时调用
+ *          运行内容: 由转子机械角和极对数直接换算电角度
+ */
 float program_get_encoder_raw_elec_angle_rad(void)
 {
     return program_wrap_angle_0_2pi(program_get_encoder_rotor_mech_angle_rad() * MOTOR_POLE_PAIRS);
 }
 
-/* 函数作用：获取零位补偿后电角度。 */
+/**
+ * @brief  获取完成零位补偿后的电角度
+ * @return 对齐后的控制电角度 (rad)
+ * @note   运行频率: 闭环控制和遥测更新时调用
+ *          运行内容: 在原始电角度基础上扣除对齐得到的电角偏置
+ */
 float program_get_encoder_aligned_elec_angle_rad(void)
 {
     return program_wrap_angle_0_2pi(program_get_encoder_raw_elec_angle_rad() - g_encoder_elec_offset_rad);
 }
 
-/* 函数作用：提供当前控制电角度。 */
+/**
+ * @brief  提供当前控制使用的电角度
+ * @return 控制电角度 (rad)
+ * @note   运行频率: 快环每次执行控制时调用
+ *          运行内容: 开环模式用积分器角度，否则用编码器对齐角度
+ */
 float program_get_control_elec_angle_rad(void)
 {
     if (g_motor.control_angle_open_loop_enable != 0U)
@@ -191,7 +286,11 @@ float program_get_control_elec_angle_rad(void)
     return program_get_encoder_aligned_elec_angle_rad();
 }
 
-/* 函数作用：更新控制角度开环状态。 */
+/**
+ * @brief  更新控制角度开环状态
+ * @note   运行频率: 快环内每次控制前调用
+ *          运行内容: 开环模式下对 theta_open_loop 按固定速度积分
+ */
 void program_update_control_angle_open_loop_state(void)
 {
     if ((g_motor.control_angle_open_loop_enable == 0U) || (g_encoder_align_done == 0U)) return;
@@ -201,7 +300,11 @@ void program_update_control_angle_open_loop_state(void)
 
 /* ── 编码器观测器 ── */
 
-/* 函数作用：复位编码器测速观测器。 */
+/**
+ * @brief  复位编码器测速观测器
+ * @note   运行频率: 上电初始化、读角失效或重新对齐时调用
+ *          运行内容: 清空连续角、测速窗口、滤波器、挂起标志和相关遥测量
+ */
 void program_reset_encoder_observer(void)
 {
     g_encoder_last_sample_counter = 0U;
@@ -226,7 +329,12 @@ void program_reset_encoder_observer(void)
         program_lpf_alpha_from_cutoff_hz(g_motor.speed_meas_lpf_cutoff_hz, 0.002f), 0.0f);
 }
 
-/* 函数作用：对连续机械角做周期性重归一化。 */
+/**
+ * @brief  对连续机械角做周期性重归一化，防止浮点精度丢失
+ * @note   运行频率: 每次编码器角度更新后调用（每个快环周期）
+ *          运行内容: 连续角超过 ±32 圈时，减去整数圈锚点；
+ *                    窗口起点同步偏移，保持速度差分值不变
+ */
 static void program_renormalize_encoder_observer(void)
 {
     /** 锚定圈数（整数圈） */
@@ -252,7 +360,12 @@ static void program_renormalize_encoder_observer(void)
     g_encoder_speed_window_start_mech_rad -= anchor_rad;
 }
 
-/* 函数作用：基于编码器角度更新机械速度测量。 */
+/**
+ * @brief  基于编码器角度更新机械速度测量
+ * @note   运行频率: 每次获得有效 MA600A 角度样本后调用（快环 10kHz 内）
+ *          运行内容: 维护连续机械角和测速窗口，窗口满后计算原始速度
+ *                    → LPF 滤波 → 量化保护，最终输出机械/电角速度
+ */
 void program_update_speed_measurement(void)
 {
     /** 当前拍机械角 (rad)，归一化到 [0, 2π) */
@@ -354,6 +467,11 @@ void program_update_speed_measurement(void)
 
 /* ── 编码器零位对齐 ── */
 
+/**
+ * @brief  复位编码器零位对齐结果
+ * @note   运行频率: 重新对齐、停机或读角失效时调用
+ *          运行内容: 清空零位偏置和对齐完成标志
+ */
 void program_reset_encoder_alignment(void)
 {
     g_encoder_align_done = 0U;
@@ -362,6 +480,11 @@ void program_reset_encoder_alignment(void)
     g_motor.align_done = 0U;
 }
 
+/**
+ * @brief  复位编码器对齐过程的运行时累积量
+ * @note   运行频率: 开始重新对齐或完成对齐后调用
+ *          运行内容: 清空对齐计数器以及 sin/cos 平均所需的累积和
+ */
 void program_reset_encoder_align_runtime(void)
 {
     g_encoder_align_counter = 0U;
@@ -370,6 +493,12 @@ void program_reset_encoder_align_runtime(void)
     g_encoder_align_sample_count = 0U;
 }
 
+/**
+ * @brief  在对齐保持阶段采集编码器电角度样本
+ * @note   运行频率: 零位对齐保持期间的每个快环调用
+ *          运行内容: 只在最后 512 拍采样窗口内累积电角度的 sin/cos，
+ *                    用于后续 atan2 求平均角，降低编码器抖动影响
+ */
 void program_capture_encoder_alignment_sample(void)
 {
     uint32_t sample_window_start_tick;
@@ -383,6 +512,13 @@ void program_capture_encoder_alignment_sample(void)
     g_encoder_align_sample_count++;
 }
 
+/**
+ * @brief  计算编码器零位对齐得到的平均电角度
+ * @return 对齐采样得到的电角度 (rad)
+ * @note   运行频率: 对齐结束时调用
+ *          运行内容: 基于累积的 sin/cos 用 atan2 求平均方向角，
+ *                    抗噪声能力远优于直接平均角度
+ */
 float program_get_encoder_alignment_angle_rad(void)
 {
     float raw_theta_elec;
@@ -394,6 +530,13 @@ float program_get_encoder_alignment_angle_rad(void)
 
 /* ── 速度斜坡 ── */
 
+/**
+ * @brief  按设定加速度更新实际速度给定（速度斜坡）
+ * @note   运行频率: 快环内每次速度控制前调用
+ *          运行内容: 非位置环模式下自动 rpm→rad/s 转换，
+ *                    再以 100 rad/s? 斜率逐步逼近目标，减少转矩冲击；
+ *                    同步输出电角速度和开环速度
+ */
 void program_update_speed_reference_ramp(void)
 {
     float speed_step_rad_s, speed_delta_rad_s;
