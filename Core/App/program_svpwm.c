@@ -68,39 +68,8 @@ typedef struct {
 /** 零位对齐采样累积量静态实例 */
 static encoder_align_t s_encoder_align;
 
-/**
- * @brief  限制浮点量上下界 [min, max]
- * @param  value      输入值
- * @param  min_value  下限
- * @param  max_value  上限
- * @return 限幅后的值
- * @note   运行频率: 各控制环按需调用
- *          运行内容: 为电流、电压和速度中间量提供统一限幅
- */
-float program_clamp_f32(float value, float min_value, float max_value)
-{
-    if (value < min_value) return min_value;
-    if (value > max_value) return max_value;
-    return value;
-}
-
-/**
- * @brief  由截止频率和采样周期换算一阶低通滤波系数 α
- * @param  cutoff_hz  截止频率 (Hz)
- * @param  dt_s       采样周期 (s)
- * @return 滤波系数 α (0~1)
- * @note   运行频率: 滤波器初始化或更新系数时调用
- *          运行内容: α = 1 - exp(-2π·fc·dt)，参数非法时返回 1.0（无滤波）
- */
-float program_lpf_alpha_from_cutoff_hz(float cutoff_hz, float dt_s)
-{
-    float alpha;
-    if ((!isfinite(cutoff_hz)) || (!isfinite(dt_s)) || (cutoff_hz <= 0.0f) || (dt_s <= 0.0f))
-        return 1.0f;
-    alpha = 1.0f - expf(-MOTOR_TWO_PI * cutoff_hz * dt_s);
-    return program_clamp_f32(alpha, 0.0f, 1.0f);
-}
-
+/////////////////////////////////////////////////
+/* ── 角度工具 ── */
 /**
  * @brief  把角度归一化到 [0, 2π)
  * @param  angle_rad  任意浮点角度 (rad)
@@ -184,7 +153,49 @@ float program_deg_to_rad(float angle_deg)
  * @note   运行频率: 速度给定更新和初始化时调用
  */
 float program_rpm_to_rad_s(float speed_rpm)
-    { if (!isfinite(speed_rpm)) return 0.0f; return speed_rpm * (MOTOR_TWO_PI / 60.0f); }
+    { 
+        if (!isfinite(speed_rpm)) return 0.0f; return speed_rpm * (MOTOR_TWO_PI / 60.0f); 
+    }
+/////////////////////////////////////
+
+
+
+/**
+ * @brief  限制浮点量上下界 [min, max]
+ * @param  value      输入值
+ * @param  min_value  下限
+ * @param  max_value  上限
+ * @return 限幅后的值
+ * @note   运行频率: 各控制环按需调用
+ *          运行内容: 为电流、电压和速度中间量提供统一限幅
+ */
+float program_clamp_f32(float value, float min_value, float max_value)
+{
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+/* ── LPF 系数 ── */
+
+/**
+ * @brief  由截止频率和采样周期换算一阶低通滤波系数 α
+ * @param  cutoff_hz  截止频率 (Hz)
+ * @param  dt_s       采样周期 (s)
+ * @return 滤波系数 α (0~1)
+ * @note   运行频率: 滤波器初始化或更新系数时调用
+ *          运行内容: α = 1 - exp(-2π·fc·dt)，参数非法时返回 1.0（无滤波）
+ */
+float program_lpf_alpha_from_cutoff_hz(float cutoff_hz, float dt_s)
+{
+    float alpha;
+    if ((!isfinite(cutoff_hz)) || (!isfinite(dt_s)) || (cutoff_hz <= 0.0f) || (dt_s <= 0.0f))
+        return 1.0f;
+    alpha = 1.0f - expf(-MOTOR_TWO_PI * cutoff_hz * dt_s);
+    return program_clamp_f32(alpha, 0.0f, 1.0f);
+}
+
+/* ── 量化保护 ── */
 
 /**
  * @brief  估算编码器测速量化分辨率
@@ -311,7 +322,6 @@ void program_update_control_angle_open_loop_state(void)
 }
 
 /* ── 编码器观测器 ── */
-
 /**
  * @brief  复位编码器测速观测器
  * @note   运行频率: 上电初始化、读角失效或重新对齐时调用

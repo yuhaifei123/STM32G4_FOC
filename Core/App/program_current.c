@@ -375,10 +375,13 @@ void program_update_current_feedback_from_raw(uint16_t ia_raw, uint16_t ib_raw,
 
 /* ── 位置环 ── */
 
-/* 函数作用：位置环主逻辑（200Hz，输出轴坐标系）。
- * 输入：position_loop_dt_s 位置环实际执行周期。输出：无返回值。
- * 调用频率：速度环中分频到 200Hz 调用。
- * 运行内容：测量 LPF → 位置误差 → hold/release 滞回 → PI → creep 补偿 → 输出速度指令。 */
+/**
+ * @brief  位置环主逻辑（200Hz，输出轴坐标系）
+ * @param  position_loop_dt_s  位置环实际执行周期 (s)
+ * @note   运行频率: 速度环中分频到 200Hz 调用
+ *          运行内容: 测量 LPF → 位置误差 → hold/release 滞回 → PI+D 阻尼
+ *                    → creep 补偿 → 输出转子速度指令给速度环
+ */
 void program_update_position_loop(float position_loop_dt_s)
 {
     /** 目标位置（归一化 rad） */
@@ -412,9 +415,9 @@ void program_update_position_loop(float position_loop_dt_s)
         g_motor.speed_ref_mech_rad_s = 0.0f;
         return;
     }
-    /** 周期参数异常 → 用默认 2ms */
+    /** 周期参数异常 → 用默认 2ms（速度窗口 20 拍 × 100μs） */
     if ((!isfinite(position_loop_dt_s)) || (position_loop_dt_s <= 0.0f))
-        position_loop_dt_s = 0.0001f * 20.0f;
+        position_loop_dt_s = PROGRAM_FAST_LOOP_DT_S * 20.0f;
 
     /** 目标位置归一化并转弧度 */
     g_motor.position_ref_mech_deg = program_wrap_angle_0_360_deg(g_motor.position_ref_mech_deg);
@@ -428,8 +431,8 @@ void program_update_position_loop(float position_loop_dt_s)
         return;
     }
 
-    /** 更新测量 LPF 系数并滤波连续角 */
-    position_meas_filter_alpha = program_lpf_alpha_from_cutoff_hz(12.0f, position_loop_dt_s);
+    /** 更新测量 LPF 系数并滤波连续角（12Hz 截止，衰减编码器量化噪声） */
+    position_meas_filter_alpha = program_lpf_alpha_from_cutoff_hz(PROGRAM_POSITION_MEAS_LPF_CUTOFF_HZ, position_loop_dt_s);
     g_control.position_meas_lpf.alpha = position_meas_filter_alpha;
     if (g_control.position_meas_lpf.initialized == 0U)
         filter_lpf_f32_init(&g_control.position_meas_lpf, position_meas_filter_alpha,
@@ -463,9 +466,10 @@ void program_update_position_loop(float position_loop_dt_s)
     position_speed_meas_output_mech_rad_s = g_motor.speed_meas_mech_rad_s / MOTOR_GEAR_RATIO;
     speed_meas_abs_rad_s = fabsf(position_speed_meas_output_mech_rad_s);
 
-    /* Hold: 位置误差和速度都在阈值内 → 刹车保持 */
+    /* ══ Hold 阶段：误差与速度均在阈值内 → 刹车保持（输出零速度） ══ */
     if ((position_error_abs_rad <= PROGRAM_POSITION_HOLD_ERR_RAD) &&
         (speed_meas_abs_rad_s <= PROGRAM_POSITION_HOLD_SPEED_MECH_RAD_S)) {
+        /** 进入 hold：置激活标志，清零释放计数器与积分 */
         g_control.position_hold_active = 1U;
         g_control.position_hold_release_counter = 0U;
         g_motor.position_integral_speed = 0.0f;
@@ -474,8 +478,9 @@ void program_update_position_loop(float position_loop_dt_s)
         g_motor.speed_ref_mech_rad_s = 0.0f;
         return;
     }
-    /** 已处于 hold：误差未超释放阈值 → 继续保持；超阈值需连续 N 周期才释放 */
+    /** 已处于 hold：误差未超释放阈值 → 继续保持；超阈值需连续 N 周期才释放（滞回防抖） */
     if (g_control.position_hold_active != 0U) {
+        /** 误差回到释放带内 → 重置释放计数器，继续刹车 */
         if (position_error_abs_rad <= PROGRAM_POSITION_HOLD_RELEASE_ERR_RAD) {
             g_control.position_hold_release_counter = 0U;
             g_motor.position_integral_speed = 0.0f;
@@ -484,38 +489,44 @@ void program_update_position_loop(float position_loop_dt_s)
             g_motor.speed_ref_mech_rad_s = 0.0f;
             return;
         }
+        /** 误差持续超释放阈值 → 计数器递增，达到确认周期数才真正释放 */
         g_control.position_hold_release_counter++;
         if (g_control.position_hold_release_counter < PROGRAM_POSITION_HOLD_RELEASE_CONFIRM_CYCLES) {
+            /** 确认周期未满 → 仍维持刹车 */
             g_motor.position_integral_speed = 0.0f;
             g_motor.position_error_mech_deg = 0.0f;
             g_motor.position_error_mech_rad = 0.0f;
             g_motor.speed_ref_mech_rad_s = 0.0f;
             return;
         }
+        /** 确认周期已满 → 退出 hold，恢复正常位置控制 */
         g_control.position_hold_active = 0U;
         g_control.position_hold_release_counter = 0U;
     }
 
-    /** 输出速度限幅有效性检查 */
+    /** 输出速度限幅有效性检查，非法值回退到 20 rad/s */
     position_speed_limit_mech_rad_s = g_motor.position_speed_limit_mech_rad_s;
     if ((!isfinite(position_speed_limit_mech_rad_s)) || (position_speed_limit_mech_rad_s <= 0.0f))
         position_speed_limit_mech_rad_s = 20.0f;
 
-    /** 位置 PI：误差 → 速度指令，并减去阻尼项 */
+    /* ══ 位置 PID 核心：PI 输出 + D 阻尼项（用速度反馈代替误差微分，避免噪声放大） ══ */
     position_speed_cmd_output_mech_rad_s = program_run_pi_f32(
         position_error_wrapped_rad, 0.0f, g_motor.position_kp, g_motor.position_ki,
         position_loop_dt_s, &g_motor.position_integral_speed,
         -position_speed_limit_mech_rad_s, position_speed_limit_mech_rad_s);
+    /** 减去阻尼项：kd × 输出轴测速（等效微分阻尼） */
     position_speed_cmd_output_mech_rad_s -=
         g_motor.position_kd * position_speed_meas_output_mech_rad_s;
+    /** 速度指令限幅到允许范围 */
     position_speed_cmd_output_mech_rad_s = program_clamp_f32(
         position_speed_cmd_output_mech_rad_s,
         -position_speed_limit_mech_rad_s, position_speed_limit_mech_rad_s);
 
-    /* Creep: 缓慢蠕动防止卡在摩擦死区 */
+    /* ══ Creep 阶段：误差大但输出速度小（卡在摩擦死区）→ 注入最小蠕动速度 ══ */
     if ((position_error_abs_rad > PROGRAM_POSITION_CREEP_ENABLE_ERR_RAD) &&
         (fabsf(position_speed_cmd_output_mech_rad_s) < PROGRAM_POSITION_CREEP_SPEED_MECH_RAD_S) &&
         (speed_meas_abs_rad_s <= PROGRAM_POSITION_HOLD_SPEED_MECH_RAD_S)) {
+        /** 以误差方向给定最小蠕动速度，突破静摩擦 */
         position_speed_cmd_output_mech_rad_s =
             copysignf(PROGRAM_POSITION_CREEP_SPEED_MECH_RAD_S, position_error_wrapped_rad);
     }

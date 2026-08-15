@@ -4,7 +4,6 @@
 #include "program.h"
 
 /* ── 编码器速度测量 ── */
-
 /**
  * @brief  基于编码器角度更新机械速度测量
  *
@@ -39,7 +38,6 @@ void program_reset_encoder_alignment(void);
 void program_reset_encoder_align_runtime(void);
 
 /* ── 编码器对齐 ── */
-
 /**
  * @brief  在对齐保持阶段采集编码器电角度样本
  *
@@ -57,6 +55,7 @@ void  program_capture_encoder_alignment_sample(void);
  */
 float program_get_encoder_alignment_angle_rad(void);
 
+//////////////////////////////
 /* ── 编码器角度获取 ── */
 /**
  * @brief  读取编码器对应的转子机械角
@@ -113,8 +112,9 @@ float program_get_control_elec_angle_rad(void);
  */
 void  program_update_control_angle_open_loop_state(void);
 
-/* ── 角度工具 ── */
 
+/////////////////////////
+/* ── 角度工具 ── */
 /** @brief 角度归一化到 [0, 2π)，NaN/Inf 返回 0 */
 float program_wrap_angle_0_2pi(float angle_rad);
 
@@ -135,6 +135,8 @@ float program_deg_to_rad(float angle_deg);
 
 /** @brief rpm → rad/s */
 float program_rpm_to_rad_s(float speed_rpm);
+//////////////////
+
 
 /**
  * @brief  限制浮点量上下界 [min, max]
@@ -148,7 +150,6 @@ float program_rpm_to_rad_s(float speed_rpm);
 float program_clamp_f32(float value, float min_value, float max_value);
 
 /* ── LPF 系数 ── */
-
 /**
  * @brief  由截止频率和采样周期换算一阶低通滤波系数 α
  *
@@ -160,8 +161,8 @@ float program_clamp_f32(float value, float min_value, float max_value);
  */
 float program_lpf_alpha_from_cutoff_hz(float cutoff_hz, float dt_s);
 
-/* ── 速度斜坡 ── */
 
+/* ── 速度斜坡 ── */
 /**
  * @brief  按设定加速度更新实际速度给定
  *
@@ -172,7 +173,6 @@ float program_lpf_alpha_from_cutoff_hz(float cutoff_hz, float dt_s);
 void program_update_speed_reference_ramp(void);
 
 /* ── 量化保护 ── */
-
 /**
  * @brief  在低速附近抑制编码器量化抖动
  *

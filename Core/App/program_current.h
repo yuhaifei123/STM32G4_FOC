@@ -25,7 +25,6 @@ float program_convert_current_from_raw(uint16_t raw, uint16_t offset_raw);
 float program_convert_vbus_from_raw(uint16_t raw);
 
 /* ── 控制环 ── */
-
 /**
  * @brief  执行速度环并更新 iq 或 uq 命令
  *
